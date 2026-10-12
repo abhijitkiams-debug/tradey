@@ -10,7 +10,7 @@ Implements PRD v1.0 Phases 1–3 (foundation, paper trading, swing approvals).
 ## Quick start
 
 ```bash
-cd claudetrade
+cd tradey
 pip install -e ".[dev]"            # numpy, pandas, pytest
 pytest -q                          # 96 tests, ~10 s
 
