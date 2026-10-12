@@ -117,6 +117,28 @@ class PaperBroker:
     def get_available_funds(self) -> Decimal:
         return self._funds
 
+    # ---- persistence (paper only: a real broker is the source of truth) --------------------
+    def snapshot(self) -> dict:
+        return {
+            "orders": [{"state": o.state, "request": o.request} for o in self._orders.values()],
+            "positions": [[sym, prod.value, q] for (sym, prod), q in self._positions.items()],
+            "funds": self._funds,
+            "next_id": len(self._orders) + 1,
+            "next_fill": sum(len(o.state.fills) for o in self._orders.values()) + 1,
+        }
+
+    def restore(self, snap: dict, decode_order) -> None:
+        self._orders.clear()
+        self._by_client.clear()
+        for item in snap["orders"]:
+            state, request = decode_order(item)
+            self._orders[state.broker_order_id] = _PaperOrder(state, request)
+            self._by_client[state.client_request_id] = state.broker_order_id
+        self._positions = {(sym, Product(prod)): q for sym, prod, q in snap["positions"]}
+        self._funds = snap["funds"]
+        self._ids = itertools.count(snap["next_id"])
+        self._fill_ids = itertools.count(snap["next_fill"])
+
     # ---- simulation --------------------------------------------------------------------
     def step(self) -> list[Fill]:
         """Advance the simulated exchange: try to fill every working order once."""

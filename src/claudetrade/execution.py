@@ -17,7 +17,7 @@ from decimal import Decimal
 from .audit import AuditLog
 from .broker.base import BrokerAdapter, BrokerError, BrokerRejected, BrokerTimeout, BrokerUnavailable
 from .ledger import CapitalLedger, DuplicateReservation, InsufficientCapital
-from .models import ZERO, Order, OrderRequest, OrderStatus, Product, RiskDecision, Side, TradeMode
+from .models import ZERO, Fill, Order, OrderRequest, OrderStatus, Product, RiskDecision, Side, TradeMode
 from .portfolio import Portfolio
 from .risk import RiskEngine
 
@@ -57,6 +57,12 @@ class ExecutionService:
         self._seen_fill_ids: set[str] = set()
         self.reconciliation_ok = True
         self.mismatches: list[str] = []
+        # persistence hooks (set by app wiring); no-ops by default
+        self.on_fill: Callable[[Order, Fill], None] = lambda o, f: None
+        self.on_change: Callable[[], None] = lambda: None
+        self.dirty: set[str] = set()
+        # Shares the operator holds outside ClaudeTrade (delivery), excluded from reconciliation.
+        self.external_cnc: dict[str, int] = {}
 
     # wired into the RiskEngine
     def seen_request_ids(self) -> set[str]:
@@ -83,6 +89,7 @@ class ExecutionService:
             if req.client_request_id not in self.decisions:
                 self.decisions[req.client_request_id] = decision
             if not decision.approved:
+                self.on_change()
                 return ExecutionResult(None, decision, "rejected by risk engine: " + "; ".join(decision.rejection_reasons))
 
             if not req.is_exit:
@@ -90,11 +97,14 @@ class ExecutionService:
                     self.ledger.reserve(req.client_request_id, decision.reserved_amount, req.mode)
                 except (InsufficientCapital, DuplicateReservation) as e:
                     self.audit.record("execution", "RESERVE_FAILED", request_id=req.client_request_id, error=str(e))
+                    self.on_change()
                     return ExecutionResult(None, decision, f"capital reservation failed: {e}")
 
             now = self.clock()
             order = Order(req.client_request_id, req, OrderStatus.PENDING, created_at=now, updated_at=now)
             self.orders[req.client_request_id] = order
+            self.dirty.add(order.client_request_id)
+            self.on_change()  # durable PENDING record *before* the broker call
             try:
                 order.broker_order_id = self.broker.place_order(req)
                 order.status = OrderStatus.OPEN
@@ -113,6 +123,7 @@ class ExecutionService:
             order.updated_at = self.clock()
             self.audit.record("execution", "ORDER_SUBMIT", request_id=req.client_request_id,
                               broker_order_id=order.broker_order_id, status=order.status.value, message=msg)
+            self.dirty.add(order.client_request_id)
             self.sync()
             return ExecutionResult(order, decision, msg)
 
@@ -125,10 +136,17 @@ class ExecutionService:
             self.alert("HIGH", f"cannot reconcile {order.client_request_id}: {e}; new entries blocked")
             return
         if state is None:
+            grace = getattr(self.broker, "reference_lookup_grace_s", 0)
+            age = (self.clock() - order.created_at).total_seconds() if order.created_at else grace
+            if age < grace:
+                # Too early to conclude: the order may still be in flight. Stay UNKNOWN (blocks entries).
+                self.reconciliation_ok = False
+                return
             # Broker has no record under our reference: the request never arrived.
             self._terminal(order, OrderStatus.REJECTED, "not received by broker (reconciled after timeout)")
             return
         order.broker_order_id = state.broker_order_id
+        self.dirty.add(order.client_request_id)
         # Leave it non-terminal so the next sync adopts the broker status *and* applies fills.
         order.status = OrderStatus.OPEN
         self.audit.record("execution", "ORDER_RECONCILED", request_id=order.client_request_id,
@@ -149,6 +167,7 @@ class ExecutionService:
                 self.audit.record(actor, "CANCEL_FAILED", request_id=client_request_id, error=str(e))
                 return f"cancel failed: {e}"
             self.audit.record(actor, "CANCEL_REQUESTED", request_id=client_request_id)
+            self.dirty.add(client_request_id)
             self.sync()
             return f"status {o.status.value}"
 
@@ -156,35 +175,44 @@ class ExecutionService:
     def sync(self) -> None:
         """Pull order states and fills from the broker; apply new fills exactly once."""
         with self._lock:
-            for o in list(self.orders.values()):
-                if o.status.is_terminal:
+            try:
+                self._sync_orders()
+            finally:
+                self.on_change()
+
+    def _sync_orders(self) -> None:
+        for o in list(self.orders.values()):
+            if o.status.is_terminal:
+                continue
+            self.dirty.add(o.client_request_id)
+            if o.status is OrderStatus.UNKNOWN:
+                self.reconcile_order(o)
+            if o.broker_order_id is None:
+                continue
+            try:
+                st = self.broker.get_order(o.broker_order_id)
+            except BrokerError as e:
+                self.alert("HIGH", f"order sync failed: {e}")
+                return
+            if st is None:
+                continue
+            for f in st.fills:
+                if f.fill_id in self._seen_fill_ids:
                     continue
-                if o.status is OrderStatus.UNKNOWN:
-                    self.reconcile_order(o)
-                if o.broker_order_id is None:
-                    continue
-                try:
-                    st = self.broker.get_order(o.broker_order_id)
-                except BrokerError as e:
-                    self.alert("HIGH", f"order sync failed: {e}")
-                    return
-                if st is None:
-                    continue
-                for f in st.fills:
-                    if f.fill_id in self._seen_fill_ids:
-                        continue
-                    self._seen_fill_ids.add(f.fill_id)
-                    self._apply_fill(o, f)
-                o.filled_quantity = st.filled_quantity
-                o.average_price = st.average_price
-                if st.status != o.status:
-                    o.status = st.status
-                    o.reject_reason = st.reject_reason
-                    o.updated_at = self.clock()
-                if o.status.is_terminal:
-                    released = self.ledger.release(o.client_request_id, note=o.status.value)
-                    if released:
-                        self.audit.record("execution", "RESERVATION_RELEASED", request_id=o.client_request_id, amount=released)
+                self._seen_fill_ids.add(f.fill_id)
+                self._apply_fill(o, f)
+            if st.filled_quantity != o.filled_quantity:
+                o.updated_at = self.clock()
+            o.filled_quantity = st.filled_quantity
+            o.average_price = st.average_price
+            if st.status != o.status:
+                o.status = st.status
+                o.reject_reason = st.reject_reason
+                o.updated_at = self.clock()
+            if o.status.is_terminal:
+                released = self.ledger.release(o.client_request_id, note=o.status.value)
+                if released:
+                    self.audit.record("execution", "RESERVATION_RELEASED", request_id=o.client_request_id, amount=released)
 
     def _apply_fill(self, o: Order, f) -> None:
         mode = o.request.mode
@@ -193,6 +221,7 @@ class ExecutionService:
             self.ledger.record_buy_fill(o.client_request_id, gross, f.charges, mode)
         else:
             self.ledger.record_sell_fill(o.client_request_id, gross, f.charges, mode)
+        self.on_fill(o, f)  # durable before applied, so a crash can't lose a booked fill
         realised = self.portfolio.apply_fill(f, mode)
         pos = self.portfolio.position(f.symbol, mode)
         if not o.request.is_exit and o.request.stop_loss is not None:
@@ -221,6 +250,15 @@ class ExecutionService:
             for p in self.portfolio.open_positions():
                 key = (p.symbol, Product.MIS if p.mode is TradeMode.INTRADAY else Product.CNC)
                 local[key] = local.get(key, 0) + p.quantity
+            # Scope: every intraday (MIS) position is ours; delivery (CNC) positions only for symbols
+            # this system has traded, net of the operator's declared external holdings.
+            managed_cnc = {o.request.symbol for o in self.orders.values() if o.request.product is Product.CNC}
+            broker_pos = {
+                (sym, prod): qty - (self.external_cnc.get(sym, 0) if prod is Product.CNC else 0)
+                for (sym, prod), qty in broker_pos.items()
+                if prod is Product.MIS or sym in managed_cnc or (sym, prod) in local
+            }
+            broker_pos = {k: v for k, v in broker_pos.items() if v != 0}
             mismatches = [
                 f"{sym}/{prod.value}: local {local.get((sym, prod), 0)} vs broker {broker_pos.get((sym, prod), 0)}"
                 for sym, prod in set(local) | set(broker_pos)
@@ -234,6 +272,7 @@ class ExecutionService:
             self.audit.record("execution", "RECONCILIATION", ok=self.reconciliation_ok, mismatches=mismatches)
             if mismatches:
                 self.alert("HIGH", "reconciliation mismatch; new entries blocked: " + "; ".join(mismatches))
+            self.on_change()
             return mismatches
 
     def open_orders(self, mode: TradeMode | None = None) -> list[Order]:

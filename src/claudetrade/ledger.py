@@ -41,12 +41,15 @@ class CapitalLedger:
         self._clock = clock
         self._events: list[LedgerEvent] = []
         self._lock = threading.RLock()
+        self.sink: Callable[[LedgerEvent], None] | None = None
 
     # ---- writes -------------------------------------------------------------------------
     def _append(self, kind: str, amount: Decimal, ref: str | None = None, mode: TradeMode | None = None, note: str = "") -> LedgerEvent:
         if amount < 0:
             raise ValueError("ledger amounts are non-negative; direction comes from kind")
         ev = LedgerEvent(len(self._events), self._clock(), kind, amount, ref, mode, note)
+        if self.sink is not None:
+            self.sink(ev)
         self._events.append(ev)
         return ev
 
@@ -96,6 +99,12 @@ class CapitalLedger:
         with self._lock:
             kind = "DEPOSIT" if signed_amount >= 0 else "WITHDRAW"
             self._append(kind, abs(signed_amount), note=f"ADJUST: {note}")
+
+    def load(self, events: list[LedgerEvent]) -> None:
+        with self._lock:
+            if [e.seq for e in events] != list(range(len(events))):
+                raise RuntimeError("ledger events are not contiguous; refusing to restore")
+            self._events = list(events)
 
     # ---- reads --------------------------------------------------------------------------
     def cash(self) -> Decimal:

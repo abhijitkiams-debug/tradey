@@ -26,8 +26,10 @@ from .lifecycle import StrategyBook
 from .market_data import MarketDataService
 from .models import IST, OperatingMode, TradeMode
 from .monitoring import IntradayEngine, Monitor
+from .persistence import Persistence
 from .portfolio import Portfolio
 from .risk import RiskEngine, TradingControls
+from .store import Store
 from .swing import SwingDesk
 
 
@@ -56,6 +58,7 @@ class ClaudeTrade:
     intraday: IntradayEngine
     live_auth: LiveAuthorisation
     bars: dict[str, pd.DataFrame] = field(default_factory=dict)
+    persistence: Persistence | None = None
 
     @classmethod
     def build(
@@ -67,13 +70,13 @@ class ClaudeTrade:
         costs: CostModel | None = None,
         broker: BrokerAdapter | None = None,
         audit_path: Path | None = None,
+        store: Store | None = None,
     ) -> ClaudeTrade:
         risk_config = risk_config or RiskConfig()
         session = session or SessionConfig()
         costs = costs or CostModel()
         audit = AuditLog(clock, audit_path)
         ledger = CapitalLedger(clock)
-        ledger.deposit(risk_config.starting_capital, note="initial capital")
         portfolio = Portfolio()
         md = MarketDataService(clock, risk_config, session)
         controls = TradingControls()
@@ -100,10 +103,23 @@ class ClaudeTrade:
         book = StrategyBook(audit, clock)
         app_bars: dict[str, pd.DataFrame] = {}
         engine = IntradayEngine(ex, md, monitor, risk_config, session, lambda s: app_bars.get(s), clock)
+        app = cls(mode, clock, risk_config, session, costs, audit, ledger, portfolio, md, controls, monitor,
+                  broker, risk, ex, swing, book, engine, live_auth, app_bars)
+        restored: dict | None = None
+        if store is not None:
+            app.persistence = Persistence(store)
+            if app.persistence.has_state():
+                restored = app.persistence.restore(app)
+            app.persistence.attach(app)
+        if restored is None:
+            ledger.deposit(risk_config.starting_capital, note="initial capital")
         audit.record("system", "STARTUP", mode=mode.value, risk_config=risk_config.version,
-                     risk_config_hash=risk_config.content_hash(), live_enabled=False)
-        return cls(mode, clock, risk_config, session, costs, audit, ledger, portfolio, md, controls, monitor,
-                   broker, risk, ex, swing, book, engine, live_auth, app_bars)
+                     risk_config_hash=risk_config.content_hash(), live_enabled=False, restored=restored)
+        if restored is not None:
+            # Broker is the source of truth after a restart: reconcile before anything trades.
+            ex.sync()
+            ex.reconcile_positions()
+        return app
 
     # ---- dashboard (§FR-11) -------------------------------------------------------------
     def dashboard(self) -> dict:
