@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claudetrade"
+version = "0.1.0"
+description = "AI-assisted NSE cash-equity trading system: Claude research, deterministic risk, verified execution (paper mode first)."
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26", "pandas>=2.1"]
+
+[project.optional-dependencies]
+agent = ["anthropic>=0.70"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+claudetrade = "claudetrade.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "B", "UP035"]
+ignore = ["E501"]
