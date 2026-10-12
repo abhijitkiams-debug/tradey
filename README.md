@@ -2,17 +2,52 @@
 
 AI-assisted trading for NSE cash equities with ₹10,000 capital. Claude does the research,
 risk rules are enforced in code, and every broker order is checked and reconciled.
-Implements PRD v1.0 Phases 1–3 (foundation, paper trading, swing approvals).
-**Only paper mode can execute; live trading is not wired up.**
+Implements PRD v1.0 Phases 1–3 (foundation, paper trading, swing approvals) and the
+machinery for the Phase 4 live pilot. **Paper trading on live Groww data works out of the
+box. Live orders need you to approve risk limits, start in LIVE mode and type an explicit
+authorisation, and the pilot checklist below should be completed first.**
 
 > Research intelligently. Validate independently. Execute deterministically. Reconcile continuously.
 
-## Quick start
+## Run it (paper trading on live Groww data)
 
 ```bash
-cd tradey
-pip install -e ".[dev]"            # numpy, pandas, pytest
-pytest -q                          # 96 tests, ~10 s
+pip install -e ".[server,groww,agent]"
+cp config/claudetrade.example.toml config/paper.toml     # pick your universe and limits
+export CLAUDETRADE_OPERATOR_TOKEN=$(python -c "import secrets;print(secrets.token_urlsafe(32))")
+export GROWW_API_KEY=... GROWW_API_SECRET=...            # or GROWW_ACCESS_TOKEN / GROWW_TOTP_SECRET
+claudetrade serve --config config/paper.toml             # http://127.0.0.1:8000, sign in with the token
+```
+
+Or with Docker: copy `.env.example` to `.env.paper`, put your config at `config/paper.toml`,
+then `docker compose up -d paper`. The `live` service has its own config, database and secrets,
+and only starts with `docker compose --profile live up -d live`.
+
+What happens each trading day (`scheduler.py`, times in IST):
+
+| Time | Job |
+|---|---|
+| 09:05 | Pre-open: broker heartbeat, reconcile positions, reset yesterday's intraday state |
+| 09:20+ | Day-T+1 validation of the strategy *you* released for today. With no release, intraday stands down |
+| Session | Every `tick_seconds`: Groww quotes and 1-min candles, broker sync, stop/target exits, entries from the frozen strategy, swing stop-loss exits |
+| 15:00–15:10 | Square-off, then broker-verified flat. If that fails: kill switch + CRITICAL alert |
+| 15:35 | End-of-day reconciliation and report |
+| 16:00 | Research: 120 days of Groww history, walk-forward on all 3 families, freeze. Releasing a version stays your decision |
+| 16:30 | Optional: Claude reviews and may file swing proposals for you to approve (`agent_daily_review = true`) |
+
+Jobs record their completion in the database, so a restart mid-day neither repeats nor skips them.
+
+The dashboard shows portfolio, positions, pending orders, swing proposals (with full rationale,
+risks, max loss and a hash-bound Approve button), approvals to execute, intraday status, research
+results with Release buttons, alerts, reconciliation and the audit trail. The controls are kill
+switch, pause/resume, manual square-off, reconcile, approve limits, and authorise/revoke live.
+
+## Development
+
+```bash
+pip install -e ".[dev,server]"
+pytest -q                          # 135 tests, ~11 s, no network needed
+ruff check src tests
 
 claudetrade research               # walk-forward all 3 strategy families (synthetic data)
 claudetrade research --data DIR    # DIR/SYMBOL.csv: timestamp,open,high,low,close,volume (1-min, IST)
@@ -36,10 +71,13 @@ Claude ──► tools.ToolGateway (typed, schema-checked, permissioned)
           swing.SwingDesk ──►  execution.ExecutionService ──► risk.RiskEngine (mandatory gate)
           (proposal → hash-bound        │                         reads ledger / portfolio /
            operator approval)           ▼                         market data / health itself
-                                  broker.PaperBroker  (Groww adapter: pending verification)
+                         broker.PaperBroker | broker.GrowwBroker (live)
+                                        │
                                         │
                      ledger.CapitalLedger (shared, event-sourced) · portfolio.Portfolio
 monitoring.Monitor / IntradayEngine (exits, daily-loss, square-off) · audit.AuditLog (hash-chained)
+store.Store (SQLite, append-only) ◄── persistence.Persistence     scheduler.Scheduler ◄── feeds.GrowwFeed
+server (FastAPI operator API + static dashboard) ── runtime.build_runtime(settings)
 ```
 
 | Module | PRD | What it does |
@@ -56,6 +94,11 @@ monitoring.Monitor / IntradayEngine (exits, daily-loss, square-off) · audit.Aud
 | `tools.py` | §8 | The 14 Claude tools. JSON-schema validated, permissioned per environment, audited |
 | `agent.py` | FR-03 | Claude orchestration loop (`claude-opus-5-5`, adaptive thinking, server-side refusal fallback enabled) |
 | `app.py` | FR-11 | Composition root and `dashboard()` snapshot (portfolio, intraday, swing, research, operations) |
+| `broker/groww.py` | §E, FR-09 | Groww adapter on the official `growwapi` SDK. Our order id goes out as `order_reference_id`. After a timeout it looks the order up by that reference, and "not found" only counts after a 30 s grace period. Errors are split into definitive vs ambiguous. An order goes terminal only once Groww's trade list covers the filled quantity. Client-side rate limits per Groww's categories |
+| `feeds.py` | FR-01 | Groww quotes, with freshness taken from the exchange's last-trade time. Intraday 1-min candles, and history fetched in 30-day chunks with a CSV cache |
+| `store.py`, `persistence.py` | §10, §12 | SQLite with append-only triggers. Audit, ledger and fills are written *before* they take effect. State is restored on restart with hash checks. The kill switch survives a restart; live authorisation never does |
+| `scheduler.py`, `runtime.py`, `settings.py` | §9, §11 | Daily lifecycle jobs, assembly from a TOML file. The file can't approve anything |
+| `server.py`, `static/index.html` | §4, FR-11 | Token-authenticated operator API (fails closed) and the dashboard |
 
 ## Safety invariants (each covered by tests)
 
@@ -65,15 +108,29 @@ monitoring.Monitor / IntradayEngine (exits, daily-loss, square-off) · audit.Aud
 - **Claude can't escalate.** There are no tools to approve, release, authorise live, resume entries, reset the kill switch or change limits. Claude can't open intraday positions or cancel exit orders. Its advisory flags can only defer or reject a session.
 - **No double-committed capital.** Duplicate request ids are rejected (by the risk engine, ledger and broker).
 - **Never falsely reports flat.** It is flat only when both the local book and the broker show no intraday (MIS) positions.
-- **Tamper-evident audit.** Every risk decision, order, fill, approval and tool call is recorded, and the log is hash-chained.
+- **Tamper-evident audit.** Every risk decision, order, fill, approval and tool call is recorded, and the log is hash-chained. The database refuses UPDATE and DELETE, and a tampered chain stops the system from starting.
+- **Restarts are safe.** Duplicate protection, reservations, approvals and the kill switch survive a restart. An order caught mid-submission is reconciled by reference, never resubmitted. Live authorisation always has to be granted again.
 
-## Not done yet (needs decisions or access)
+## Live pilot checklist (PRD Phase 4)
 
-1. **Groww adapter.** `broker/groww.py` deliberately raises an error. Before building it, verify API access, order types, product codes, whether client references can be looked up after a timeout, and rate limits and fees (PRD §9, §18 Q3). Then run `tests/test_execution.py` against it.
-2. **Market-data provider** for historical and live data (§18 Q2). `cli.load_csv_dir` accepts 1-min CSVs for now.
-3. **Persistence.** State lives in memory, plus an optional JSONL audit file. PostgreSQL (append-only tables per §10) and a durable scheduler are the next step.
-4. **Dashboard UI and FastAPI service.** `ClaudeTrade.dashboard()` returns the full FR-11 data set, ready to serve.
-5. **Operator decisions (§18).** The `RiskConfig` defaults (₹100 per-trade risk, ₹300 daily loss, ₹4,000 max order, 3 positions) and the `EligibilityCriteria` thresholds are paper placeholders. Live use needs approved values, square-off failure procedure, cutoff times (`SessionConfig`) and a minimum paper-trading period.
-6. **Cost model.** The `costs.py` rates are estimates and must be checked against Groww's current fee schedule.
+The live adapter was written against the `growwapi` 1.5.0 SDK source and Groww's published
+docs, and tested against a faithful fake. It has **not** touched a real account yet. Before
+authorising live orders:
+
+1. **Your decisions (§18).** Set and approve the limits in your config (₹ risk per trade, daily
+   loss, max order, positions), the eligibility thresholds, the cutoff times, the holiday list,
+   and a minimum paper-trading period (e.g. 4–6 weeks of clean end-of-day reports).
+2. **Verify against your Groww account** with one share of a liquid stock, in LIVE mode:
+   - looking up an unknown `order_reference_id` returns not-found (404);
+   - `positions` and `holdings` quantities match `get_positions()` after an MIS buy/sell and a CNC buy (T and T+1);
+   - the trade-list key is `trade_list` and `groww_trade_id` is stable;
+   - Groww's own MIS auto square-off time is later than `square_off_deadline`.
+3. **Fees.** Compare `costs.py` estimates with a real contract note and adjust `CostModel`.
+4. **Operations.** Write down the square-off failure procedure (§18 Q5): who gets the CRITICAL
+   alert and how they exit manually in the Groww app. Practise the kill switch.
+
+Remaining gaps: PostgreSQL (SQLite is used, with the same append-only design), alert delivery
+beyond the dashboard (`Monitor.notifier` is the hook for email/SMS/Telegram), and contract-note
+reconciliation of actual charges.
 
 A stop-loss does not guarantee the exit price. Gaps, poor liquidity and execution failures can cause losses larger than planned.

@@ -113,6 +113,8 @@ class Persistence:
                     put("proposal", f"{pid}|{p.version:04d}", p)
             for aid, ap in a.swing.approvals.items():
                 put("approval", aid, ap)
+            for pid, reason in a.swing.declined.items():
+                put("declined", pid, reason)
             for h, sv in a.strategies.versions.items():
                 put("strategy_version", h, sv)
                 put("strategy_evidence", h, a.strategies.evidence.get(h))
@@ -185,6 +187,7 @@ class Persistence:
                 ap.status, ap.note = ApprovalStatus.INVALIDATED, "proposal missing or altered at restore"
             app.swing.approvals[aid] = ap
 
+        app.swing.declined.update(s.latest("declined"))
         c = s.latest("controls").get("global")
         if c:
             app.controls.kill_switch = c["kill_switch"]

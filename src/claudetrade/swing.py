@@ -205,6 +205,7 @@ class SwingDesk:
     clock: Callable[[], datetime]
     proposals: dict[str, list[SwingProposal]] = field(default_factory=dict)
     approvals: dict[str, Approval] = field(default_factory=dict)
+    declined: dict[str, str] = field(default_factory=dict)  # proposal_id -> reason
 
     def submit_proposal(self, raw: dict[str, Any], actor: str = "claude") -> SwingProposal:
         symbol = raw.get("symbol")
@@ -318,8 +319,14 @@ class SwingDesk:
         self.audit.record(actor, "APPROVAL_EXECUTED", approval_id=approval_id, result=result.message)
         return result
 
+    def decline(self, proposal_id: str, operator: str, reason: str) -> None:
+        self.latest(proposal_id)
+        self.declined[proposal_id] = reason
+        self.audit.record(operator, "PROPOSAL_DECLINED", proposal_id=proposal_id, reason=reason)
+
     def pending(self) -> list[SwingProposal]:
         approved = {a.proposal_id for a in self.approvals.values() if a.status is not ApprovalStatus.INVALIDATED}
+        approved |= set(self.declined)
         now = self.clock()
         return [v[-1] for pid, v in self.proposals.items() if pid not in approved and v[-1].actionable and v[-1].expires_at > now]
 

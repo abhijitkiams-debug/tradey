@@ -106,6 +106,15 @@ class IntradayEngine:
         self.square_off = SquareOffStatus()
         self.invalidated: str | None = None
 
+    def reset_for_day(self) -> None:
+        """Start-of-day reset: yesterday's activation, signals and square-off state never carry over."""
+        self.strategy_version = None
+        self.validation = None
+        self.universe = []
+        self._acted_signals = set()
+        self.square_off = SquareOffStatus()
+        self.invalidated = None
+
     def activate(self, sv: StrategyVersion, validation: SessionValidation, universe: list[str]) -> bool:
         if validation.outcome is not SessionOutcome.APPROVED or validation.version_hash != sv.content_hash:
             self.monitor.alert("INFO", f"intraday not activated: {validation.outcome.value} {list(validation.reasons)}")
@@ -223,8 +232,8 @@ class IntradayEngine:
         Never reports flat unless the broker's own position view agrees."""
         st = self.square_off
         if not st.started:
+            # No pause needed: the Risk Engine already refuses intraday entries after the entry cutoff.
             st.started = True
-            self.monitor.pause_entries("engine", "square-off window", TradeMode.INTRADAY)
             self.ex.audit.record("engine", "SQUARE_OFF_START")
         st.attempts += 1
         for o in self.ex.open_orders(TradeMode.INTRADAY):

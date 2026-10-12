@@ -1,0 +1,25 @@
+# Separate paper and live environments (PRD §9): different databases, configs and secrets.
+# Secrets come from env files that are NOT committed (see .env.example).
+services:
+  paper:
+    build: .
+    env_file: [.env.paper]
+    volumes:
+      - ./config/paper.toml:/config/claudetrade.toml:ro
+      - paper-data:/data
+    ports: ["127.0.0.1:8000:8000"]
+    restart: unless-stopped
+
+  live:
+    build: .
+    profiles: ["live"]          # never starts unless explicitly requested: docker compose --profile live up
+    env_file: [.env.live]
+    volumes:
+      - ./config/live.toml:/config/claudetrade.toml:ro
+      - live-data:/data
+    ports: ["127.0.0.1:8001:8000"]
+    restart: unless-stopped
+
+volumes:
+  paper-data:
+  live-data:

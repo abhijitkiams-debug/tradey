@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClaudeTrade</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #16181d; --muted: #646b78; --line: #e2e5ea;
+    --good: #1f7a4d; --bad: #b42318; --warn: #a15c07; --accent: #3449c4; --chip: #eef0f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111317; --panel: #1a1d23; --ink: #e8eaee; --muted: #9aa1ad; --line: #2b2f37;
+            --good: #4cc38a; --bad: #ff6b5e; --warn: #f0b04a; --accent: #8b9cff; --chip: #252932; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; }
+  .chip { display: inline-flex; gap: 6px; align-items: center; padding: 2px 10px; border-radius: 999px; background: var(--chip); font-size: 12px; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .ok .dot { background: var(--good); } .bad .dot { background: var(--bad); } .warn .dot { background: var(--warn); }
+  .bad { color: var(--bad); } .good { color: var(--good); } .muted { color: var(--muted); }
+  main { display: grid; gap: 16px; padding: 16px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); max-width: 1500px; margin: 0 auto; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  section.wide { grid-column: 1 / -1; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .kpi b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .kpi span { font-size: 12px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .empty { color: var(--muted); font-style: italic; }
+  .detail { background: var(--chip); border-radius: 8px; padding: 10px 12px; margin-top: 8px; }
+  .detail ul { margin: 4px 0 8px 18px; padding: 0; }
+  #login { max-width: 420px; margin: 12vh auto; }
+  input, select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  #toast { position: fixed; bottom: 16px; right: 16px; max-width: 420px; padding: 10px 14px; border-radius: 8px; background: var(--ink); color: var(--bg); display: none; z-index: 5; }
+  code { font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="login" hidden>
+  <section>
+    <h2>Operator sign-in</h2>
+    <p class="muted">Enter the operator token configured as <code>CLAUDETRADE_OPERATOR_TOKEN</code>. It is kept for this tab only.</p>
+    <div class="row"><input id="tok" type="password" placeholder="operator token" style="flex:1"><button class="primary" onclick="signIn()">Sign in</button></div>
+  </section>
+</div>
+<div id="app" hidden>
+<header>
+  <h1>ClaudeTrade</h1>
+  <span id="chips" class="row"></span>
+  <span style="flex:1"></span>
+  <span class="muted" id="asof"></span>
+</header>
+<main>
+  <section class="wide"><h2>Portfolio</h2><div class="kpis" id="kpis"></div></section>
+  <section class="wide"><h2>Controls</h2><div class="row" id="controls"></div></section>
+  <section class="wide"><h2>Positions</h2><div class="scroll" id="positions"></div></section>
+  <section class="wide"><h2>Pending orders</h2><div class="scroll" id="orders"></div></section>
+  <section class="wide"><h2>Swing proposals awaiting approval</h2><div id="proposals"></div></section>
+  <section><h2>Approvals</h2><div class="scroll" id="approvals"></div></section>
+  <section><h2>Intraday</h2><div id="intraday"></div></section>
+  <section class="wide"><h2>Research</h2><div class="scroll" id="research"></div></section>
+  <section><h2>Alerts</h2><div id="alerts"></div></section>
+  <section><h2>Rejected orders &amp; reconciliation</h2><div id="ops"></div></section>
+  <section class="wide"><h2>Audit trail</h2><div class="scroll" id="audit"></div></section>
+</main>
+</div>
+<div id="toast"></div>
+<script>
+const TOKEN_KEY = "ct-operator-token";
+let token = null;
+try { token = sessionStorage.getItem(TOKEN_KEY); } catch (e) {}
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const IST = {timeZone: "Asia/Kolkata"};
+const tm = (v) => v ? new Date(v).toLocaleTimeString("en-IN", IST) : "—";
+const dt = (v) => v ? new Date(v).toLocaleString("en-IN", IST) : "—";
+const inr = (v) => v == null || v === "" ? "—" : "₹" + Number(v).toLocaleString("en-IN", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+function toast(msg, bad) {
+  const t = $("toast"); t.textContent = msg; t.style.display = "block";
+  t.style.background = bad ? "var(--bad)" : "var(--ink)";
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 6000);
+}
+function signIn() {
+  token = $("tok").value.trim();
+  try { sessionStorage.setItem(TOKEN_KEY, token); } catch (e) {}
+  refresh();
+}
+async function api(path, method = "GET", body) {
+  const r = await fetch(path, {method, headers: {"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+                               body: body ? JSON.stringify(body) : undefined});
+  if (r.status === 401 || r.status === 503) { $("app").hidden = true; $("login").hidden = false; throw new Error((await r.json()).detail); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+}
+async function act(path, body, confirmText) {
+  if (confirmText && !confirm(confirmText)) return;
+  try { const r = await api(path, "POST", body); toast(r.message || "Done"); } catch (e) { toast(e.message, true); }
+  refresh();
+}
+function ask(label) { const r = prompt(label); return r && r.trim().length >= 3 ? r.trim() : null; }
+
+function table(rows, cols) {
+  if (!rows.length) return '<p class="empty">None</p>';
+  return "<table><tr>" + cols.map(c => `<th>${esc(c[0])}</th>`).join("") + "</tr>" +
+    rows.map(r => "<tr>" + cols.map(c => `<td>${c[1](r)}</td>`).join("") + "</tr>").join("") + "</table>";
+}
+function chip(label, state) { return `<span class="chip ${state}"><span class="dot"></span>${esc(label)}</span>`; }
+
+async function showProposal(id) {
+  const el = $("p-" + id);
+  if (el.innerHTML) { el.innerHTML = ""; return; }
+  const p = await api("/api/proposals/" + encodeURIComponent(id));
+  const li = (xs) => "<ul>" + (xs || []).map(x => `<li>${esc(x)}</li>`).join("") + "</ul>";
+  el.innerHTML = `<div class="detail">
+    <div><b>${esc(p.recommendation)} ${esc(p.quantity)} × ${esc(p.symbol)}</b> · entry ${inr(p.entry_low)}–${inr(p.entry_high)} · stop ${inr(p.stop_loss)} · target ${inr(p.target_low)}–${inr(p.target_high)} · ${esc(p.horizon_days)} days</div>
+    <div class="muted">Reference price ${inr(p.reference_price)} · est. costs ${inr(p.estimated_costs)} · max loss ${inr(p.max_loss)} (a stop does not guarantee the exit price) · expires ${dt(p.expires_at)}</div>
+    <p>${esc(p.rationale)}</p>
+    <b>Evidence</b>${li(p.evidence)}<b>Risks</b>${li(p.risks)}<b>Invalidation</b>${li(p.invalidation)}
+    <div class="muted">Confidence: ${esc(p.confidence_notes)} · v${esc(p.version)} · <code>${esc(p.hash.slice(0, 16))}…</code></div>
+    <div class="row" style="margin-top:8px">
+      <button class="primary" onclick='act("/api/swing/${encodeURIComponent(id)}/approve", {version:${Number(p.version)}, hash:"${esc(p.hash)}"}, "Approve exactly this proposal (v${Number(p.version)})?")'>Approve</button>
+      <button onclick='(r => r && act("/api/swing/${encodeURIComponent(id)}/decline", {reason:r}))(ask("Reason for declining"))'>Decline</button>
+    </div></div>`;
+}
+
+function render(d) {
+  const P = d.portfolio, O = d.operations, I = d.intraday;
+  $("asof").textContent = "as of " + tm(d.as_of) + " IST";
+  $("chips").innerHTML = [
+    chip(d.mode, d.mode === "LIVE" ? "warn" : "ok"),
+    chip(d.live_authorised ? "LIVE AUTHORISED" : "live off", d.live_authorised ? "warn" : ""),
+    chip(O.kill_switch ? "KILL SWITCH ON" : "kill switch off", O.kill_switch ? "bad" : "ok"),
+    chip(O.entries_paused ? "entries paused" : "entries enabled", O.entries_paused ? "warn" : "ok"),
+    chip("broker", O.broker_healthy ? "ok" : "bad"),
+    chip("market data", O.market_data_healthy ? "ok" : "bad"),
+    chip("reconciled", O.reconciliation_ok ? "ok" : "bad"),
+    chip("audit chain", O.audit_chain_intact ? "ok" : "bad"),
+  ].join("");
+  const k = [["Cash", P.cash], ["Available", P.available], ["Reserved", P.reserved], ["Committed", P.committed],
+             ["Realised today", P.realised_pnl_today], ["Unrealised", P.unrealised_pnl], ["Charges paid", P.charges_paid]];
+  $("kpis").innerHTML = k.map(([l, v]) => `<div class="kpi"><b class="${Number(v) < 0 ? "bad" : ""}">${inr(v)}</b><span>${l}</span></div>`).join("") +
+    `<div class="kpi"><b>${inr(d.risk_config.limits.max_daily_loss)}</b><span>Daily loss limit</span></div>`;
+
+  const rc = d.risk_config;
+  $("controls").innerHTML = `
+    <button class="danger" onclick='(r => r && act("/api/controls/kill-switch", {reason:r}))(ask("Reason for kill switch"))'>Kill switch</button>
+    <button onclick='(r => r && act("/api/controls/kill-switch/reset", {reason:r}))(ask("Reason for reset (positions must be reconciled)"))' ${O.kill_switch ? "" : "disabled"}>Reset kill switch</button>
+    <button onclick='(r => r && act("/api/controls/pause", {reason:r}))(ask("Reason for pausing entries"))'>Pause entries</button>
+    <button onclick='(r => r && act("/api/controls/resume", {reason:r}))(ask("Reason for resuming entries"))' ${O.entries_paused ? "" : "disabled"}>Resume entries</button>
+    <button onclick='(r => r && act("/api/square-off", {reason:r}))(ask("Reason for manual square-off"))'>Square off intraday</button>
+    <button onclick='act("/api/positions/reconcile")'>Reconcile now</button>
+    <span style="flex:1"></span>
+    <span class="muted">Risk config <code>${esc(rc.version)}</code> ${rc.approved_by ? "approved by " + esc(rc.approved_by) : '<b class="warn">not approved</b>'}</span>
+    <button onclick='act("/api/risk/approve", null, "Approve these limits? " + ${JSON.stringify(JSON.stringify(rc.limits))})' ${rc.approved_by ? "disabled" : ""}>Approve limits</button>
+    ${d.mode === "LIVE" ? (d.live_authorised
+      ? `<button class="danger" onclick='act("/api/live/revoke", null, "Revoke live trading?")'>Revoke live</button>`
+      : `<button class="danger" onclick='(c => c && act("/api/live/authorise", {confirm:c}))(prompt("Type ENABLE LIVE TRADING to authorise live orders"))'>Authorise live</button>`) : ""}`;
+
+  $("positions").innerHTML = table(P.positions, [
+    ["Symbol", r => esc(r.symbol)], ["Mode", r => esc(r.mode)], ["Qty", r => esc(r.qty)], ["Avg", r => inr(r.avg)],
+    ["LTP", r => inr(r.ltp)], ["Stop", r => inr(r.stop)], ["Target", r => inr(r.target)],
+    ["Unrealised", r => `<span class="${Number(r.unrealised) < 0 ? "bad" : "good"}">${inr(r.unrealised)}</span>`]]);
+  $("orders").innerHTML = table(P.pending_orders, [
+    ["Id", r => `<code>${esc(r.id)}</code>`], ["Symbol", r => esc(r.symbol)], ["Side", r => esc(r.side)],
+    ["Qty", r => `${esc(r.filled)}/${esc(r.qty)}`], ["Status", r => esc(r.status)], ["Mode", r => esc(r.mode)]]);
+
+  const props = d.swing.awaiting_approval;
+  $("proposals").innerHTML = props.length ? props.map(p => `<div style="padding:6px 0;border-bottom:1px solid var(--line)">
+      <div class="row"><b>${esc(p.rec)} ${esc(p.symbol)}</b><span class="muted">v${esc(p.v)} · expires ${dt(p.expires)}</span>
+      <span style="flex:1"></span><button onclick='showProposal(${JSON.stringify(p.id)})'>Review</button></div>
+      <div id="p-${esc(p.id)}"></div></div>`).join("") : '<p class="empty">Nothing awaiting approval</p>';
+  $("approvals").innerHTML = table(d.swing.approvals, [
+    ["Approval", r => `<code>${esc(r.id)}</code>`], ["Status", r => esc(r.status)], ["By", r => esc(r.by)], ["Note", r => esc(r.note)],
+    ["", r => r.status === "ACTIVE" ? `<button class="primary" onclick='act("/api/swing/approvals/${encodeURIComponent(r.id)}/execute", null, "Place this approved order now? It will be revalidated first.")'>Execute</button>` : ""]]);
+
+  const sq = I.square_off;
+  $("intraday").innerHTML = `<table>
+    <tr><th>Strategy</th><td>${I.strategy ? `<code>${esc(I.strategy)}</code>` : '<span class="muted">none active today</span>'}</td></tr>
+    <tr><th>Validation</th><td>${esc(I.validation || "—")}</td></tr>
+    <tr><th>Invalidated</th><td>${esc(I.invalidated || "no")}</td></tr>
+    <tr><th>Square-off</th><td>${sq.started ? (sq.verified_flat ? '<span class="good">verified flat</span>' : '<span class="bad">NOT FLAT</span>') : "not started"}${sq.last_error ? " · " + esc(sq.last_error) : ""}</td></tr>
+    <tr><th>Universe</th><td>${esc((d.universe || []).join(", "))}</td></tr></table>`;
+
+  const research = Object.entries(d.research);
+  $("research").innerHTML = research.length ? table(research.map(([h, v]) => ({h, ...v})), [
+    ["Version", r => `<code>${esc(r.label)}</code>`], ["Status", r => `<span class="${r.status === "ELIGIBLE" ? "good" : "muted"}">${esc(r.status)}</span>`],
+    ["Why not eligible", r => esc((r.failures || []).join("; "))],
+    ["", r => r.status === "ELIGIBLE" ? `<button onclick='releaseVersion(${JSON.stringify(r.label)})'>Release…</button>` : ""]])
+    : '<p class="empty">No research runs yet</p>';
+
+  $("alerts").innerHTML = O.alerts.length ? table(O.alerts.slice().reverse(), [
+    ["Time", r => tm(r.ts)], ["Severity", r => `<span class="${r.sev === "INFO" ? "" : "bad"}">${esc(r.sev)}</span>`],
+    ["Message", r => esc(r.msg)]]) : '<p class="empty">No alerts</p>';
+  $("ops").innerHTML = (O.mismatches.length ? `<p class="bad">${O.mismatches.map(esc).join("<br>")}</p>` : '<p class="good">Book matches broker</p>') +
+    table(O.rejected_orders, [["Order", r => `<code>${esc(r.id)}</code>`], ["Reason", r => esc(r.reason)]]) +
+    (d.scheduler.errors.length ? `<p class="bad">${d.scheduler.errors.map(esc).join("<br>")}</p>` : "");
+}
+
+async function releaseVersion(label) {
+  const s = await api("/api/strategies");
+  const v = s.versions.find(x => x.label === label);
+  const day = prompt("Release " + label + " for which session date? (YYYY-MM-DD)", new Date(Date.now() + 864e5).toISOString().slice(0, 10));
+  if (v && day) act("/api/strategies/" + v.hash + "/release", {session_date: day}, "Release " + label + " for " + day + "?");
+}
+
+async function refresh() {
+  if (!token) { $("login").hidden = false; return; }
+  try {
+    const [d, audit] = await Promise.all([api("/api/dashboard"), api("/api/audit?limit=40")]);
+    $("login").hidden = true; $("app").hidden = false;
+    render(d);
+    $("audit").innerHTML = table(audit.slice().reverse(), [
+      ["#", r => esc(r.seq)], ["Time", r => tm(r.ts)], ["Actor", r => esc(r.actor)],
+      ["Action", r => esc(r.action)], ["Details", r => `<code>${esc(JSON.stringify(r.payload).slice(0, 220))}</code>`]]);
+  } catch (e) { if (token) toast(e.message, true); }
+}
+refresh();
+setInterval(() => { if (!document.hidden) refresh(); }, 5000);
+</script>
+</body>
+</html>

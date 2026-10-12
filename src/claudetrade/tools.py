@@ -243,11 +243,12 @@ class ToolGateway:
             validate_schema(spec["input_schema"], args)
         except ToolInputError as e:
             return self._deny(name, args, f"invalid input: {e}")
-        self.app.audit.record("claude", "TOOL_CALL", tool=name, args=to_jsonable(args))
-        try:
-            result = self._handlers[name](args)
-        except (SchemaError, ToolInputError, KeyError, PermissionError, ValueError) as e:
-            result = {"ok": False, "error": str(e)}
+        with self.app.lock:  # per call, so a long agent run never blocks the trading loop
+            self.app.audit.record("claude", "TOOL_CALL", tool=name, args=to_jsonable(args))
+            try:
+                result = self._handlers[name](args)
+            except (SchemaError, ToolInputError, KeyError, PermissionError, ValueError) as e:
+                result = {"ok": False, "error": str(e)}
         out = to_jsonable(result)
         self.app.audit.record("gateway", "TOOL_RESULT", tool=name, ok=out.get("ok", True) if isinstance(out, dict) else True)
         return out

@@ -7,6 +7,7 @@ risk config and a runtime ``LiveAuthorisation`` — none of which can come from 
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -59,6 +60,7 @@ class ClaudeTrade:
     live_auth: LiveAuthorisation
     bars: dict[str, pd.DataFrame] = field(default_factory=dict)
     persistence: Persistence | None = None
+    lock: threading.RLock = field(default_factory=threading.RLock)  # serialises scheduler, API and agent mutations
 
     @classmethod
     def build(
@@ -113,6 +115,10 @@ class ClaudeTrade:
             app.persistence.attach(app)
         if restored is None:
             ledger.deposit(risk_config.starting_capital, note="initial capital")
+        if store is not None and not risk_config.is_approved:
+            prior = store.latest("risk_approval").get(risk_config.content_hash())
+            if prior:  # same limits as an earlier operator approval
+                app._set_risk_config(risk_config.approve(prior["approved_by"], prior["approved_at"]))
         audit.record("system", "STARTUP", mode=mode.value, risk_config=risk_config.version,
                      risk_config_hash=risk_config.content_hash(), live_enabled=False, restored=restored)
         if restored is not None:
@@ -187,6 +193,23 @@ class ClaudeTrade:
                                     for o in self.execution.orders.values() if o.status.value == "REJECTED"][-20:],
             },
         }
+
+    def approve_risk_config(self, operator: str) -> RiskConfig:
+        """Operator approval of the current limits, bound to their content hash."""
+        cfg = self.risk_config.approve(operator, self.clock())
+        self._set_risk_config(cfg)
+        if self.persistence is not None:
+            self.persistence.store.put("risk_approval", cfg.content_hash(),
+                                       {"approved_by": operator, "approved_at": cfg.approved_at})
+        self.audit.record(operator, "RISK_CONFIG_APPROVED", risk_config_hash=cfg.content_hash(), version=cfg.version)
+        return cfg
+
+    def _set_risk_config(self, cfg: RiskConfig) -> None:
+        self.risk_config = cfg
+        self.risk.config = cfg
+        self.swing.risk_config = cfg
+        self.intraday.risk = cfg
+        self.market_data.risk = cfg
 
     def authorise_live(self, operator: str) -> None:
         if self.mode is not OperatingMode.LIVE:

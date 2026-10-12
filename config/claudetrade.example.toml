@@ -1,0 +1,55 @@
+# ClaudeTrade settings. Limits here are proposals: they take effect for live orders only
+# after the operator approves them in the dashboard (approval is bound to their hash, so
+# editing this file requires re-approval). Live trading additionally needs a runtime
+# authorisation that is never restored after a restart.
+
+mode = "PAPER"            # RESEARCH | PAPER | LIVE
+data_source = "groww"     # groww: live quotes + candles from Groww (paper fills use them) | none
+db_path = "var/claudetrade.db"
+tick_seconds = 15
+agent_daily_review = false  # true: Claude reviews after close and may file swing proposals
+
+# Liquid NSE large caps priced so that 1 share << ₹4,000 order cap. Your choice; keep it small.
+universe = ["ITC", "COALINDIA", "NTPC", "POWERGRID", "ONGC", "TATASTEEL"]
+default_avg_daily_volume = 5000000   # used by the liquidity filter until per-symbol values are set
+
+[avg_daily_volume]
+# ITC = 15000000
+
+[external_holdings]
+# Delivery shares you hold outside ClaudeTrade, excluded from reconciliation:
+# ITC = 25
+
+[risk]                     # PRD §13 / §18 Q1 — paper placeholders, decide before live
+version = "pilot-1"
+starting_capital = 10000
+risk_per_trade = 100
+max_daily_loss = 300
+max_order_value = 4000
+max_position_value = 4000
+max_portfolio_exposure = 9000
+max_concurrent_positions = 3
+max_spread_bps = 15
+max_gap_pct = 5
+max_quote_age_intraday_s = 10
+max_quote_age_swing_s = 120
+swing_proposal_ttl_minutes = 240
+swing_material_change_pct = 1.5
+
+[session]                  # PRD §18 Q6 — confirm against Groww's MIS auto square-off time
+no_new_entries_after = "14:45"
+square_off_start = "15:00"
+square_off_deadline = "15:10"
+holidays = []              # NSE trading holidays, ISO dates, e.g. "2026-10-20"
+
+[research]
+history_days = 120
+train_days = 40
+test_days = 10
+cache_dir = "var/history"
+
+[eligibility]              # PRD §18 Q4 — live-pilot qualification thresholds
+min_oos_trades = 30
+min_oos_profit_factor = 1.2
+max_oos_drawdown_pct = 10.0
+min_positive_fold_ratio = 0.6

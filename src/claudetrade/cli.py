@@ -3,6 +3,7 @@
   claudetrade research   [--data DIR] [--days N]   walk-forward all strategy families, freeze results
   claudetrade paper-demo [--days N]                research -> (maybe) release -> replayed paper session
   claudetrade agent "<task>" [--data DIR]          run Claude against the paper gateway (needs anthropic)
+  claudetrade serve --config FILE                  scheduler + operator API/dashboard (paper or live)
 
 Without --data, synthetic bars are used. Synthetic results prove the pipeline runs; they
 say nothing about real markets.
@@ -134,6 +135,23 @@ def cmd_agent(args) -> int:
     return 0
 
 
+def cmd_serve(args) -> int:
+    import uvicorn
+
+    from .runtime import build_runtime
+    from .server import create_app
+    from .settings import load_settings
+
+    settings = load_settings(args.config)
+    rt = build_runtime(settings)
+    rt.start()
+    try:
+        uvicorn.run(create_app(rt), host=args.host, port=args.port, log_level="info")
+    finally:
+        rt.stop()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="claudetrade")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -144,6 +162,11 @@ def main(argv: list[str] | None = None) -> int:
         if name == "agent":
             p.add_argument("task")
         p.set_defaults(fn=fn)
+    sp = sub.add_parser("serve", help="run scheduler + operator API/dashboard")
+    sp.add_argument("--config", default=None, help="TOML settings file")
+    sp.add_argument("--host", default="127.0.0.1")
+    sp.add_argument("--port", type=int, default=8000)
+    sp.set_defaults(fn=cmd_serve)
     args = ap.parse_args(argv)
     return args.fn(args)
 

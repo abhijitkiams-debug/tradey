@@ -3,3 +3,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.jsonl
+.env.paper
+.env.live
+.env
+var/
+config/paper.toml
+config/live.toml
