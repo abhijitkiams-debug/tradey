@@ -207,6 +207,26 @@ def create_app(rt: Runtime, token: str | None = None) -> FastAPI:
             return app.intraday.run_square_off()
         return locked(run)
 
+    @api.post("/api/alerts/{alert_id}/ack")
+    def ack(alert_id: str, op: str = Depends(operator)) -> dict:
+        a = locked(app.monitor.ack, alert_id, op)
+        return {"ok": True, "alert_id": alert_id, "acked_by": a["acked_by"]}
+
+    @api.post("/api/alerts/test")
+    def test_alert(op: str = Depends(operator)) -> dict:
+        if not app.alert_channel_configured:
+            raise HTTPException(409, "no alert channel configured (see docs/RUNBOOK.md §1)")
+        locked(app.monitor.alert, "HIGH", f"Test alert from {op}. If you can read this on your phone, alerting works.")
+        return {"ok": True, "message": "test alert sent; check your phone"}
+
+    @api.get("/api/live/gate")
+    def live_gate(op: str = Depends(operator)) -> dict:
+        from .evidence import evaluate
+
+        if app.live_gate is None:
+            return {"passed": True, "reasons": ["no gate configured"]}
+        return to_jsonable(evaluate(app.live_gate, app.clock(), app.alert_channel_configured))
+
     @api.post("/api/positions/reconcile")
     def reconcile(op: str = Depends(operator)) -> dict:
         return {"mismatches": locked(app.execution.reconcile_positions)}

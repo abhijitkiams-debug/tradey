@@ -16,6 +16,7 @@ from typing import Any
 
 from .backtest import EligibilityCriteria
 from .config import RiskConfig, SessionConfig
+from .evidence import LiveGate
 from .models import OperatingMode
 
 
@@ -40,6 +41,7 @@ class Settings:
     session: SessionConfig = field(default_factory=SessionConfig)
     research: ResearchSettings = field(default_factory=ResearchSettings)
     eligibility: EligibilityCriteria = field(default_factory=EligibilityCriteria)
+    live_gate: LiveGate = field(default_factory=LiveGate)
     agent_daily_review: bool = False
     tick_seconds: int = 15
 
@@ -76,6 +78,7 @@ def load_settings(path: str | Path | None) -> Settings:
         session=_coerce(SessionConfig, raw.get("session", {})),
         research=_coerce(ResearchSettings, raw.get("research", {})),
         eligibility=_coerce(EligibilityCriteria, raw.get("eligibility", {})),
+        live_gate=_coerce(LiveGate, raw.get("live_gate", {})),
     )
     for k in ("universe",):
         if k in top:

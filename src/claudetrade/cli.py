@@ -135,6 +135,23 @@ def cmd_agent(args) -> int:
     return 0
 
 
+def cmd_groww_check(args) -> int:
+    """Read-only checks against your Groww account (RUNBOOK §5a). Places no orders."""
+    from .app import system_clock
+    from .broker.groww import GrowwBroker
+
+    b = GrowwBroker.from_env(system_clock)
+    print("heartbeat (margin endpoint):", "ok" if b.heartbeat() else f"FAILED {b.last_error}")
+    try:
+        r = b.find_by_client_id("id-000000000000")
+        print("unknown reference lookup:", "not found (expected)" if r is None else f"UNEXPECTED: {r}")
+    except Exception as e:  # noqa: BLE001 - report whatever the API does
+        print(f"unknown reference lookup: raised {type(e).__name__} ({b.last_error}) — report this; timeouts will stay UNKNOWN")
+    print("available funds (CNC):", b.get_available_funds())
+    print("positions + holdings:", b.get_positions() or "none")
+    return 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
 
@@ -162,6 +179,8 @@ def main(argv: list[str] | None = None) -> int:
         if name == "agent":
             p.add_argument("task")
         p.set_defaults(fn=fn)
+    gc = sub.add_parser("groww-check", help="read-only checks against your Groww account")
+    gc.set_defaults(fn=cmd_groww_check)
     sp = sub.add_parser("serve", help="run scheduler + operator API/dashboard")
     sp.add_argument("--config", default=None, help="TOML settings file")
     sp.add_argument("--host", default="127.0.0.1")

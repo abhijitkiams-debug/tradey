@@ -9,7 +9,7 @@ db_path = "var/claudetrade.db"
 tick_seconds = 15
 agent_daily_review = false  # true: Claude reviews after close and may file swing proposals
 
-# Liquid NSE large caps priced so that 1 share << ₹4,000 order cap. Your choice; keep it small.
+# Liquid NSE large caps well under the ₹1,000 order cap, so a position can be more than 1-2 shares.
 universe = ["ITC", "COALINDIA", "NTPC", "POWERGRID", "ONGC", "TATASTEEL"]
 default_avg_daily_volume = 5000000   # used by the liquidity filter until per-symbol values are set
 
@@ -20,14 +20,14 @@ default_avg_daily_volume = 5000000   # used by the liquidity filter until per-sy
 # Delivery shares you hold outside ClaudeTrade, excluded from reconciliation:
 # ITC = 25
 
-[risk]                     # PRD §13 / §18 Q1 — paper placeholders, decide before live
-version = "pilot-1"
+[risk]                     # Operator decisions, 2026-10-22 (PRD §13 / §18 Q1)
+version = "pilot-2026-10-22"
 starting_capital = 10000
-risk_per_trade = 100
-max_daily_loss = 300
-max_order_value = 4000
-max_position_value = 4000
-max_portfolio_exposure = 9000
+risk_per_trade = 100       # ₹ at risk per trade (entry - stop) x qty
+max_daily_loss = 300       # realised + unrealised; new entries stop for the day
+max_order_value = 1000     # ₹ per order
+max_position_value = 1000  # = order cap: no adding to a position beyond ₹1,000
+max_portfolio_exposure = 3000  # 3 positions x ₹1,000
 max_concurrent_positions = 3
 max_spread_bps = 15
 max_gap_pct = 5
@@ -47,6 +47,12 @@ history_days = 120
 train_days = 40
 test_days = 10
 cache_dir = "var/history"
+
+[live_gate]                # Operator decision 2026-10-22: 72 hours of paper trading before live
+min_paper_hours = 72
+min_clean_sessions = 3     # and the last 3 paper sessions must be clean (flat on time, reconciled, no job failures)
+paper_evidence_db = "/paper/var/claudetrade.db"   # the PAPER deployment's database (mounted read-only)
+require_alert_channel = true
 
 [eligibility]              # PRD §18 Q4 — live-pilot qualification thresholds
 min_oos_trades = 30

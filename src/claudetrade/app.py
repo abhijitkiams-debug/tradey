@@ -21,6 +21,8 @@ from .broker import PaperBroker
 from .broker.base import BrokerAdapter
 from .config import LiveAuthorisation, RiskConfig, SessionConfig
 from .costs import CostModel
+from .evidence import LiveGate
+from .evidence import evaluate as evaluate_gate
 from .execution import ExecutionService
 from .ledger import CapitalLedger
 from .lifecycle import StrategyBook
@@ -60,7 +62,9 @@ class ClaudeTrade:
     live_auth: LiveAuthorisation
     bars: dict[str, pd.DataFrame] = field(default_factory=dict)
     persistence: Persistence | None = None
-    lock: threading.RLock = field(default_factory=threading.RLock)  # serialises scheduler, API and agent mutations
+    lock: threading.RLock = field(default_factory=threading.RLock)
+    live_gate: LiveGate | None = None  # set by the runtime from settings; None only in unit tests
+    alert_channel_configured: bool = False  # serialises scheduler, API and agent mutations
 
     @classmethod
     def build(
@@ -187,7 +191,11 @@ class ClaudeTrade:
                 "mismatches": self.execution.mismatches,
                 "kill_switch": self.controls.kill_switch,
                 "entries_paused": self.controls.entries_paused or bool(self.controls.paused_modes),
-                "alerts": [{"ts": a.ts.isoformat(), "sev": a.severity, "msg": a.message} for a in self.monitor.alerts[-20:]],
+                "alerts": [{"id": a.alert_id, "ts": a.ts.isoformat(), "sev": a.severity, "msg": a.message,
+                            "acked_by": a.acked_by, "sends": a.sends} for a in self.monitor.alerts[-20:]],
+                "unacked_critical": [{"id": a.alert_id, "ts": a.ts.isoformat(), "msg": a.message, "sends": a.sends}
+                                     for a in self.monitor.unacked_critical()],
+                "alert_channel_configured": self.alert_channel_configured,
                 "audit_chain_intact": self.audit.verify(),
                 "rejected_orders": [{"id": o.client_request_id, "reason": o.reject_reason}
                                     for o in self.execution.orders.values() if o.status.value == "REJECTED"][-20:],
@@ -214,6 +222,12 @@ class ClaudeTrade:
     def authorise_live(self, operator: str) -> None:
         if self.mode is not OperatingMode.LIVE:
             raise PermissionError("system was not started in LIVE mode")
+        if self.live_gate is not None:
+            res = evaluate_gate(self.live_gate, self.clock(), self.alert_channel_configured)
+            self.audit.record(operator, "LIVE_GATE_CHECK", passed=res.passed, reasons=res.reasons,
+                              paper_hours=round(res.paper_hours, 1), clean_sessions=res.clean_sessions)
+            if not res.passed:
+                raise PermissionError("live gate not met: " + "; ".join(res.reasons))
         self.live_auth.authorise(operator, self.clock(), self.risk_config)
         self.audit.record(operator, "LIVE_AUTHORISED", risk_config_hash=self.risk_config.content_hash())
 

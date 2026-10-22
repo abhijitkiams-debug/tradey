@@ -46,7 +46,7 @@ switch, pause/resume, manual square-off, reconcile, approve limits, and authoris
 
 ```bash
 pip install -e ".[dev,server]"
-pytest -q                          # 135 tests, ~11 s, no network needed
+pytest -q                          # ~150 tests, ~40 s, no network needed
 ruff check src tests
 
 claudetrade research               # walk-forward all 3 strategy families (synthetic data)
@@ -114,20 +114,28 @@ server (FastAPI operator API + static dashboard) ── runtime.build_runtime(se
 ## Live pilot checklist (PRD Phase 4)
 
 The live adapter was written against the `growwapi` 1.5.0 SDK source and Groww's published
-docs, and tested against a faithful fake. It has **not** touched a real account yet. Before
-authorising live orders:
+docs, and tested against a faithful fake. It has **not** touched a real account yet.
 
-1. **Your decisions (§18).** Set and approve the limits in your config (₹ risk per trade, daily
-   loss, max order, positions), the eligibility thresholds, the cutoff times, the holiday list,
-   and a minimum paper-trading period (e.g. 4–6 weeks of clean end-of-day reports).
-2. **Verify against your Groww account** with one share of a liquid stock, in LIVE mode:
-   - looking up an unknown `order_reference_id` returns not-found (404);
-   - `positions` and `holdings` quantities match `get_positions()` after an MIS buy/sell and a CNC buy (T and T+1);
-   - the trade-list key is `trade_list` and `groww_trade_id` is stable;
-   - Groww's own MIS auto square-off time is later than `square_off_deadline`.
-3. **Fees.** Compare `costs.py` estimates with a real contract note and adjust `CostModel`.
-4. **Operations.** Write down the square-off failure procedure (§18 Q5): who gets the CRITICAL
-   alert and how they exit manually in the Groww app. Practise the kill switch.
+**Operator decisions (2026-10-22), already in `config/claudetrade.example.toml`:** ₹100 risk per
+trade, ₹300 daily loss limit, ₹1,000 per order (and per position, ₹3,000 total exposure), and
+72 hours of paper trading before live.
+
+The 72 hours are **enforced**. `POST /api/live/authorise` is refused until the paper deployment's
+own database (mounted read-only, audit chain verified) shows at least 72 hours since paper
+trading started, with the last 3 sessions clean: flat by 15:10, reconciled, and no failed jobs.
+It also needs a working alert channel. `GET /api/live/gate` shows where you stand.
+
+Before authorising live, follow [`docs/RUNBOOK.md`](docs/RUNBOOK.md):
+
+1. §1: set up Telegram alerts and press **Send test alert**.
+2. §5a: the one-share live test (start with `claudetrade groww-check`, which is read-only).
+3. §5b: compare the estimated fees with a real contract note.
+4. §3: read the square-off failure procedure. A failed square-off sends a CRITICAL alert that
+   repeats every 2 minutes until you acknowledge it, and the kill switch stays on until positions
+   reconcile.
+
+At ₹1,000 per order, fixed charges are about 1.5% of an intraday round trip and about 3.7% of
+a delivery round trip, so expect most strategies to fail the eligibility gate at this size.
 
 Remaining gaps: PostgreSQL (SQLite is used, with the same append-only design), alert delivery
 beyond the dashboard (`Monitor.notifier` is the hook for email/SMS/Telegram), and contract-note

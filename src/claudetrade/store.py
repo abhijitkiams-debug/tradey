@@ -150,5 +150,10 @@ class Store:
         cur = self._conn.execute("SELECT body FROM records WHERE kind=? AND key=? ORDER BY seq", (kind, key))
         return [loads(b) for (b,) in cur.fetchall()]
 
+    def checkpoint_wal(self) -> None:
+        with self._lock:
+            if self.path != ":memory:":
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
     def close(self) -> None:
         self._conn.close()

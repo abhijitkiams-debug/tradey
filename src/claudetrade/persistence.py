@@ -120,6 +120,9 @@ class Persistence:
                 put("strategy_evidence", h, a.strategies.evidence.get(h))
             for rid, r in a.strategies.releases.items():
                 put("release", rid, r)
+            for al in a.monitor.alerts[-500:]:
+                if al.severity != "INFO" or al.acked_by:
+                    put("alert", al.alert_id, al)
             c = a.controls
             put("controls", "global", {"kill_switch": c.kill_switch, "entries_paused": c.entries_paused,
                                        "paused_modes": sorted(m.value for m in c.paused_modes), "reasons": c.reasons})
@@ -188,6 +191,11 @@ class Persistence:
             app.swing.approvals[aid] = ap
 
         app.swing.declined.update(s.latest("declined"))
+        from .monitoring import Alert
+
+        app.monitor.alerts = [Alert(**d) for _, d in sorted(s.latest("alert").items())]
+        for al in app.monitor.alerts:
+            al.last_sent = None  # re-send unacknowledged CRITICAL alerts promptly after a restart
         c = s.latest("controls").get("global")
         if c:
             app.controls.kill_switch = c["kill_switch"]

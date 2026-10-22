@@ -43,7 +43,8 @@ def _groww_client():
 
 
 def build_runtime(settings: Settings, clock: Callable[[], datetime] = system_clock,
-                  groww_client: Any | None = None, research_loader: Callable[[], dict] | None = None) -> Runtime:
+                  groww_client: Any | None = None, research_loader: Callable[[], dict] | None = None,
+                  notifier: Callable[[Any], None] | None = None) -> Runtime:
     store = Store(settings.db_path)
     broker = None
     client = groww_client
@@ -56,6 +57,15 @@ def build_runtime(settings: Settings, clock: Callable[[], datetime] = system_clo
     app = ClaudeTrade.build(mode=settings.mode, clock=clock, risk_config=settings.risk, session=settings.session,
                             broker=broker, store=store)
     app.execution.external_cnc = dict(settings.external_holdings)
+    app.live_gate = settings.live_gate
+    if notifier is None:
+        from .notify import notifier_from_env
+
+        notifier = notifier_from_env(
+            label=f"ClaudeTrade {settings.mode.value}",
+            on_error=lambda ch, e: app.audit.record("monitor", "NOTIFY_FAILED", channel=ch, error=type(e).__name__))
+    app.monitor.notifier = notifier
+    app.alert_channel_configured = notifier is not None
     for sym in settings.universe:
         vol = settings.avg_daily_volume.get(sym, settings.default_avg_daily_volume)
         app.market_data.register(Instrument(sym), avg_daily_volume=vol)

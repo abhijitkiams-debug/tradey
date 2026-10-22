@@ -30,7 +30,7 @@
   .kpi b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
   .kpi span { font-size: 12px; color: var(--muted); }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  th, td { text-align: left; padding: 6px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th, td { overflow-wrap: anywhere; text-align: left; padding: 6px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { font-size: 12px; color: var(--muted); font-weight: 600; }
   .scroll { overflow-x: auto; }
   button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); cursor: pointer; }
@@ -63,6 +63,7 @@
   <span class="muted" id="asof"></span>
 </header>
 <main>
+  <section class="wide" id="critical" hidden style="border-color:var(--bad);border-width:2px"></section>
   <section class="wide"><h2>Portfolio</h2><div class="kpis" id="kpis"></div></section>
   <section class="wide"><h2>Controls</h2><div class="row" id="controls"></div></section>
   <section class="wide"><h2>Positions</h2><div class="scroll" id="positions"></div></section>
@@ -71,8 +72,8 @@
   <section><h2>Approvals</h2><div class="scroll" id="approvals"></div></section>
   <section><h2>Intraday</h2><div id="intraday"></div></section>
   <section class="wide"><h2>Research</h2><div class="scroll" id="research"></div></section>
-  <section><h2>Alerts</h2><div id="alerts"></div></section>
-  <section><h2>Rejected orders &amp; reconciliation</h2><div id="ops"></div></section>
+  <section><h2>Alerts</h2><div class="scroll" id="alerts"></div></section>
+  <section><h2>Rejected orders &amp; reconciliation</h2><div class="scroll" id="ops"></div></section>
   <section class="wide"><h2>Audit trail</h2><div class="scroll" id="audit"></div></section>
 </main>
 </div>
@@ -149,6 +150,7 @@ function render(d) {
     chip("market data", O.market_data_healthy ? "ok" : "bad"),
     chip("reconciled", O.reconciliation_ok ? "ok" : "bad"),
     chip("audit chain", O.audit_chain_intact ? "ok" : "bad"),
+    chip(O.alert_channel_configured ? "alerts → phone" : "NO ALERT CHANNEL", O.alert_channel_configured ? "ok" : "warn"),
   ].join("");
   const k = [["Cash", P.cash], ["Available", P.available], ["Reserved", P.reserved], ["Committed", P.committed],
              ["Realised today", P.realised_pnl_today], ["Unrealised", P.unrealised_pnl], ["Charges paid", P.charges_paid]];
@@ -163,6 +165,7 @@ function render(d) {
     <button onclick='(r => r && act("/api/controls/resume", {reason:r}))(ask("Reason for resuming entries"))' ${O.entries_paused ? "" : "disabled"}>Resume entries</button>
     <button onclick='(r => r && act("/api/square-off", {reason:r}))(ask("Reason for manual square-off"))'>Square off intraday</button>
     <button onclick='act("/api/positions/reconcile")'>Reconcile now</button>
+    <button onclick='act("/api/alerts/test")'>Send test alert</button>
     <span style="flex:1"></span>
     <span class="muted">Risk config <code>${esc(rc.version)}</code> ${rc.approved_by ? "approved by " + esc(rc.approved_by) : '<b class="warn">not approved</b>'}</span>
     <button onclick='act("/api/risk/approve", null, "Approve these limits? " + ${JSON.stringify(JSON.stringify(rc.limits))})' ${rc.approved_by ? "disabled" : ""}>Approve limits</button>
@@ -202,9 +205,16 @@ function render(d) {
     ["", r => r.status === "ELIGIBLE" ? `<button onclick='releaseVersion(${JSON.stringify(r.label)})'>Release…</button>` : ""]])
     : '<p class="empty">No research runs yet</p>';
 
+  const crit = O.unacked_critical || [];
+  $("critical").hidden = !crit.length;
+  $("critical").innerHTML = crit.length ? `<h2 class="bad">Critical — action required</h2>` + crit.map(a =>
+    `<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b>${tm(a.ts)}</b> · sent ${esc(a.sends)}×
+     <p>${esc(a.msg)}</p><button class="danger" onclick='act("/api/alerts/${encodeURIComponent(a.id)}/ack", null, "Acknowledge? Repeats stop; the kill switch stays on.")'>Acknowledge</button></div>`).join("")
+    + `<p class="muted">Procedure: docs/RUNBOOK.md §3</p>` : "";
   $("alerts").innerHTML = O.alerts.length ? table(O.alerts.slice().reverse(), [
     ["Time", r => tm(r.ts)], ["Severity", r => `<span class="${r.sev === "INFO" ? "" : "bad"}">${esc(r.sev)}</span>`],
-    ["Message", r => esc(r.msg)]]) : '<p class="empty">No alerts</p>';
+    ["Message", r => esc(r.msg)], ["Ack", r => r.sev === "CRITICAL" ? (r.acked_by ? esc(r.acked_by) : '<b class="bad">pending</b>') : ""]])
+    : '<p class="empty">No alerts</p>';
   $("ops").innerHTML = (O.mismatches.length ? `<p class="bad">${O.mismatches.map(esc).join("<br>")}</p>` : '<p class="good">Book matches broker</p>') +
     table(O.rejected_orders, [["Order", r => `<code>${esc(r.id)}</code>`], ["Reason", r => esc(r.reason)]]) +
     (d.scheduler.errors.length ? `<p class="bad">${d.scheduler.errors.map(esc).join("<br>")}</p>` : "");

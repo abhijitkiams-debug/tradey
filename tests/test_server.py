@@ -110,6 +110,9 @@ def test_live_needs_live_process_approved_limits_and_typed_confirmation(env, tmp
     assert lc.post("/api/live/authorise", json={"confirm": "yes"}, headers=AUTH).status_code == 400
     assert lc.post("/api/live/authorise", json={"confirm": LIVE_CONFIRMATION}, headers=AUTH).status_code == 409  # limits unapproved
     assert lc.post("/api/risk/approve", headers=AUTH).status_code == 200
+    blocked = lc.post("/api/live/authorise", json={"confirm": LIVE_CONFIRMATION}, headers=AUTH)
+    assert blocked.status_code == 409 and "live gate" in blocked.json()["detail"]  # no paper evidence yet
+    rt.app.live_gate = None  # gate itself is covered in test_live_gate.py
     assert lc.post("/api/live/authorise", json={"confirm": LIVE_CONFIRMATION}, headers=AUTH).json()["live_authorised"]
     assert rt.app.live_auth.is_valid_for(rt.app.risk_config)
     lc.post("/api/live/revoke", headers=AUTH)

@@ -17,6 +17,7 @@ services:
     volumes:
       - ./config/live.toml:/config/claudetrade.toml:ro
       - live-data:/data
+      - paper-data:/paper:ro      # paper trading record, read by the 72-hour live gate
     ports: ["127.0.0.1:8001:8000"]
     restart: unless-stopped
 

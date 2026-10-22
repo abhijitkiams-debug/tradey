@@ -26,11 +26,16 @@ from .models import OrderRequest, OrderType, Product, Side, TradeMode
 from .risk import TradingControls, size_by_risk
 
 
-@dataclass(frozen=True)
+@dataclass
 class Alert:
     ts: datetime
     severity: str  # INFO | HIGH | CRITICAL
     message: str
+    alert_id: str = ""
+    acked_by: str | None = None
+    acked_at: datetime | None = None
+    last_sent: datetime | None = None
+    sends: int = 0
 
 
 @dataclass
@@ -41,18 +46,51 @@ class Monitor:
     alerts: list[Alert] = field(default_factory=list)
     notifier: Callable[[Alert], None] | None = None
 
-    def alert(self, severity: str, message: str) -> None:
-        a = Alert(self.clock(), severity, message)
+    critical_repeat_s: int = 120
+
+    def alert(self, severity: str, message: str) -> Alert:
+        a = Alert(self.clock(), severity, message, alert_id=f"al-{len(self.alerts) + 1:05d}")
         self.alerts.append(a)
-        self.audit.record("monitor", "ALERT", severity=severity, message=message)
+        self.audit.record("monitor", "ALERT", alert_id=a.alert_id, severity=severity, message=message)
+        self._send(a)
+        return a
+
+    def _send(self, a: Alert) -> None:
+        a.last_sent, a.sends = self.clock(), a.sends + 1
         if self.notifier:
-            self.notifier(a)
+            try:
+                self.notifier(a)
+            except Exception as e:  # noqa: BLE001 - a failing channel must never stop trading logic
+                self.audit.record("monitor", "NOTIFY_FAILED", alert_id=a.alert_id, error=type(e).__name__)
+
+    def unacked_critical(self) -> list[Alert]:
+        return [a for a in self.alerts if a.severity == "CRITICAL" and a.acked_by is None]
+
+    def escalate(self) -> int:
+        """Re-send unacknowledged CRITICAL alerts every ``critical_repeat_s`` until a human acks."""
+        now, n = self.clock(), 0
+        for a in self.unacked_critical():
+            if a.last_sent is None or (now - a.last_sent).total_seconds() >= self.critical_repeat_s:
+                self._send(a)
+                n += 1
+        return n
+
+    def ack(self, alert_id: str, operator: str) -> Alert:
+        a = next((x for x in self.alerts if x.alert_id == alert_id), None)
+        if a is None:
+            raise KeyError(f"unknown alert {alert_id}")
+        if a.acked_by is None:
+            a.acked_by, a.acked_at = operator, self.clock()
+            self.audit.record(operator, "ALERT_ACKNOWLEDGED", alert_id=alert_id, after_sends=a.sends)
+        return a
 
     def activate_kill_switch(self, actor: str, reason: str) -> None:
         self.controls.kill_switch = True
         self.controls.reasons.append(reason)
         self.audit.record(actor, "KILL_SWITCH_ON", reason=reason)
-        self.alert("CRITICAL", f"kill switch activated by {actor}: {reason}")
+        # HIGH, not CRITICAL: the event that tripped it carries its own CRITICAL alert, so the
+        # operator gets one repeating alert to acknowledge, not two.
+        self.alert("HIGH", f"kill switch activated by {actor}: {reason}")
 
     def pause_entries(self, actor: str, reason: str, mode: TradeMode | None = None) -> None:
         if mode is None:
@@ -73,12 +111,25 @@ class Monitor:
         self.audit.record(operator, "KILL_SWITCH_OFF", reason=reason)
 
 
+def square_off_failure_message(broker_open: str, local_open: list, now: datetime) -> str:
+    local = ", ".join(f"{p.symbol} {p.quantity:+d}" for p in local_open) or "none"
+    return (
+        f"SQUARE-OFF FAILED at {now:%H:%M} IST. Open intraday (MIS) positions — broker: {broker_open}; "
+        f"local book: {local}. ClaudeTrade keeps retrying automatically and the kill switch is ON. "
+        "ACT NOW (docs/RUNBOOK.md §3): 1) In the Groww app open your intraday positions and Exit each one at market. "
+        "2) Cancel any pending orders for those symbols. 3) Confirm Positions shows no MIS quantity. "
+        "4) Acknowledge this alert in the dashboard. Do not reset the kill switch until Reconcile shows no mismatches."
+    )
+
+
 @dataclass
 class SquareOffStatus:
     started: bool = False
     verified_flat: bool = False
     attempts: int = 0
     last_error: str | None = None
+    escalated: bool = False
+    failed: bool = False  # sticky for the day: the deadline was missed, even if flat later
 
 
 class IntradayEngine:
@@ -262,15 +313,23 @@ class IntradayEngine:
         now = self.clock()
         if st.verified_flat:
             self.ex.audit.record("engine", "SQUARE_OFF_VERIFIED_FLAT", attempts=st.attempts)
+            if st.escalated:
+                self.monitor.alert("INFO", f"Intraday book now verified FLAT after {st.attempts} attempts. "
+                                           "Kill switch stays on until you reconcile and reset it.")
+                st.escalated = False
         elif now.time() >= self.session.square_off_deadline:
-            st.last_error = f"not flat after deadline: broker={broker_mis} local={[p.symbol for p in local_open]}"
-            self.monitor.activate_kill_switch("engine", "square-off failure")
-            self.monitor.alert("CRITICAL", "SQUARE-OFF FAILED — operator action required: " + st.last_error)
+            open_desc = ", ".join(f"{k[0]} {v:+d}" for k, v in broker_mis.items() if isinstance(k, tuple)) or str(broker_mis)
+            st.last_error = f"not flat after deadline: broker={open_desc} local={[p.symbol for p in local_open]}"
+            if not st.escalated:  # once; repeats come from Monitor.escalate until acknowledged
+                st.escalated = st.failed = True
+                self.monitor.activate_kill_switch("engine", "square-off failure")
+                self.monitor.alert("CRITICAL", square_off_failure_message(open_desc, local_open, now))
         return st
 
     def end_of_day_report(self) -> dict:
         now = self.clock()
-        orders = [o for o in self.ex.orders.values() if o.request.mode is TradeMode.INTRADAY]
+        orders = [o for o in self.ex.orders.values() if o.request.mode is TradeMode.INTRADAY
+                  and o.created_at is not None and o.created_at.date() == now.date()]
         return {
             "date": now.date().isoformat(),
             "strategy": self.strategy_version.label if self.strategy_version else None,
@@ -279,7 +338,9 @@ class IntradayEngine:
             "rejected": sum(o.status.value == "REJECTED" for o in orders),
             "realised_pnl": str(self.ex.portfolio.realised_pnl_on(now.date())),
             "charges_paid_total": str(self.ex.ledger.charges_paid()),
+            "mode": self.ex.risk.operating_mode.value,
             "verified_flat": self.square_off.verified_flat,
+            "square_off_failed": self.square_off.failed,
             "reconciliation_ok": self.ex.reconciliation_ok,
             "alerts": [a.message for a in self.monitor.alerts if a.ts.date() == now.date()],
         }
