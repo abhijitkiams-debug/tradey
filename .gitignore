@@ -9,3 +9,4 @@ __pycache__/
 var/
 config/paper.toml
 config/live.toml
+config/claudetrade.toml

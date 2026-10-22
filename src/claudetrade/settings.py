@@ -32,7 +32,11 @@ class ResearchSettings:
 class Settings:
     mode: OperatingMode = OperatingMode.PAPER
     data_source: str = "groww"  # groww | none
-    db_path: str = "var/claudetrade.db"
+    db_path: str = "var/claudetrade.db"  # single-book runtime (tests, CLI tools)
+    # Desk (claudetrade serve): both books in one service, money kept fully separate.
+    paper_db_path: str = "var/paper.db"
+    live_db_path: str = "var/live.db"
+    live_enabled: bool = False  # build the live (Groww) book; needs Groww credentials
     universe: tuple[str, ...] = ()
     avg_daily_volume: dict[str, int] = field(default_factory=dict)
     default_avg_daily_volume: int | None = None  # None: unknown -> liquidity check fails closed

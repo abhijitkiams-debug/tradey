@@ -28,6 +28,10 @@ class GrowwFeed:
     def __init__(self, client: Any, md: MarketDataService, clock: Callable[[], datetime],
                  exchange: str = "NSE", limiter: RateLimiter | None = None, timeout_s: int = 5):
         self.client, self.md, self.clock = client, md, clock
+        self.targets: list[MarketDataService] = [md]  # one poll feeds every book (paper and live)
+        self.min_interval_s = 5.0
+        self._last: dict[str, tuple[datetime, Quote]] = {}
+        self._bars: dict[str, tuple[datetime, pd.DataFrame]] = {}
         self.exchange = exchange
         self.limiter = limiter or RateLimiter()
         self.timeout_s = timeout_s
@@ -47,20 +51,35 @@ class GrowwFeed:
         return Quote(symbol, last, _d(q.get("bid_price")), _d(q.get("offer_price")), int(q.get("volume") or 0),
                      prev_close, src, self.clock(), source="groww")
 
+    def add_target(self, md: MarketDataService) -> None:
+        if all(t is not md for t in self.targets):  # identity: MarketDataService compares by value
+            self.targets.append(md)
+
     def poll(self, symbols: list[str]) -> int:
-        """Refresh quotes; returns how many succeeded. Failures mark the feed unhealthy."""
+        """Refresh quotes into every target; returns how many succeeded. Failures mark the feed
+        unhealthy. A symbol polled within ``min_interval_s`` is served from that poll."""
         ok = 0
+        now = self.clock()
         for s in symbols:
-            try:
-                q = self.quote(s)
-            except Exception as e:  # noqa: BLE001 - any failure just means no fresh quote
-                self.errors[s] = type(e).__name__
-                continue
-            if q is not None:
-                self.md.ingest_quote(q)
-                self.errors.pop(s, None)
-                ok += 1
-        self.md.feed_connected = ok > 0 or not symbols
+            cached = self._last.get(s)
+            if cached and (now - cached[0]).total_seconds() < self.min_interval_s:
+                q = cached[1]
+            else:
+                try:
+                    q = self.quote(s)
+                except Exception as e:  # noqa: BLE001 - any failure just means no fresh quote
+                    self.errors[s] = type(e).__name__
+                    self._last.pop(s, None)
+                    continue
+                if q is None:
+                    continue
+                self._last[s] = (now, q)
+            for md in self.targets:
+                md.ingest_quote(q)
+            self.errors.pop(s, None)
+            ok += 1
+        for md in self.targets:
+            md.feed_connected = ok > 0 or not symbols
         return ok
 
     def candles(self, symbol: str, start: datetime, end: datetime, interval: str = "1minute") -> pd.DataFrame:
@@ -85,10 +104,15 @@ class GrowwFeed:
 
     def today_bars(self, symbol: str) -> pd.DataFrame:
         now = self.clock()
+        cached = self._bars.get(symbol)
+        if cached and (now - cached[0]).total_seconds() < self.min_interval_s:
+            return cached[1]
         start = datetime.combine(now.date(), time(9, 15), IST)
         df = self.candles(symbol, start, now)
         # drop the bar that is still forming
-        return df[df.index + pd.Timedelta(minutes=1) <= pd.Timestamp(now)]
+        df = df[df.index + pd.Timedelta(minutes=1) <= pd.Timestamp(now)]
+        self._bars[symbol] = (now, df)
+        return df
 
     def history(self, symbol: str, days: int, end: date | None = None, cache_dir: Path | None = None) -> pd.DataFrame:
         """1-minute history in 30-day chunks (Groww's per-request limit), optionally cached as CSV."""

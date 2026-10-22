@@ -7,44 +7,71 @@
 <link rel="icon" href="data:,">
 <style>
   :root {
-    --bg: #f6f7f9; --panel: #ffffff; --ink: #16181d; --muted: #646b78; --line: #e2e5ea;
+    --bg: #f5f6f8; --panel: #ffffff; --ink: #16181d; --muted: #646b78; --line: #e2e5ea;
     --good: #1f7a4d; --bad: #b42318; --warn: #a15c07; --accent: #3449c4; --chip: #eef0f4;
+    --paper: #3449c4; --live: #b42318; --live-soft: #fdecea; --paper-soft: #eef0fb;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #111317; --panel: #1a1d23; --ink: #e8eaee; --muted: #9aa1ad; --line: #2b2f37;
-            --good: #4cc38a; --bad: #ff6b5e; --warn: #f0b04a; --accent: #8b9cff; --chip: #252932; }
+            --good: #4cc38a; --bad: #ff6b5e; --warn: #f0b04a; --accent: #8b9cff; --chip: #252932;
+            --paper: #8b9cff; --live: #ff6b5e; --live-soft: #3a1f1d; --paper-soft: #23264a; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
-  header h1 { font-size: 16px; margin: 0 8px 0 0; }
+  header { padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 3; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; max-width: 1500px; margin: 0 auto; }
+  header h1 { font-size: 16px; margin: 0; }
+  .tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .tabs button { border: 0; border-radius: 0; padding: 6px 14px; background: transparent; }
+  .tabs button[aria-pressed="true"].paper { background: var(--paper); color: #fff; }
+  .tabs button[aria-pressed="true"].live { background: var(--live); color: #fff; }
   .chip { display: inline-flex; gap: 6px; align-items: center; padding: 2px 10px; border-radius: 999px; background: var(--chip); font-size: 12px; white-space: nowrap; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
   .ok .dot { background: var(--good); } .bad .dot { background: var(--bad); } .warn .dot { background: var(--warn); }
-  .bad { color: var(--bad); } .good { color: var(--good); } .muted { color: var(--muted); }
+  .bad { color: var(--bad); } .good { color: var(--good); } .muted { color: var(--muted); } .warn { color: var(--warn); }
   main { display: grid; gap: 16px; padding: 16px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); max-width: 1500px; margin: 0 auto; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
   section.wide { grid-column: 1 / -1; }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+  .bookhead { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 14px; border-radius: 10px; font-weight: 600; }
+  .bookhead.paper { background: var(--paper-soft); color: var(--paper); }
+  .bookhead.live { background: var(--live-soft); color: var(--live); }
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
   .kpi b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
   .kpi span { font-size: 12px; color: var(--muted); }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  th, td { overflow-wrap: anywhere; text-align: left; padding: 6px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th, td { overflow-wrap: anywhere; text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { font-size: 12px; color: var(--muted); font-weight: 600; }
   .scroll { overflow-x: auto; }
   button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); cursor: pointer; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
-  button:disabled { opacity: .5; cursor: not-allowed; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .empty { color: var(--muted); font-style: italic; }
   .detail { background: var(--chip); border-radius: 8px; padding: 10px 12px; margin-top: 8px; }
   .detail ul { margin: 4px 0 8px 18px; padding: 0; }
+  /* three-position strategy switch */
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; white-space: nowrap; }
+  .seg button { border: 0; border-radius: 0; padding: 5px 12px; background: transparent; font-weight: 600; font-size: 12px; letter-spacing: .03em; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"].OFF { background: var(--muted); color: var(--panel); }
+  .seg button[aria-pressed="true"].PAPER { background: var(--paper); color: #fff; }
+  .seg button[aria-pressed="true"].LIVE { background: var(--live); color: #fff; }
+  .progress { height: 6px; background: var(--chip); border-radius: 3px; overflow: hidden; margin: 4px 0 2px; min-width: 110px; }
+  .progress i { display: block; height: 100%; background: var(--paper); }
+  .progress.done i { background: var(--good); }
+  .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--chip); white-space: nowrap; }
+  .badge.good { background: color-mix(in srgb, var(--good) 15%, transparent); }
+  .badge.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); }
+  .master { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+  .switch { font-weight: 700; padding: 4px 12px; border-radius: 999px; }
+  .switch.on { background: var(--live); color: #fff; } .switch.off { background: var(--chip); color: var(--muted); }
   #login { max-width: 420px; margin: 12vh auto; }
   input, select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
-  #toast { position: fixed; bottom: 16px; right: 16px; max-width: 420px; padding: 10px 14px; border-radius: 8px; background: var(--ink); color: var(--bg); display: none; z-index: 5; }
+  #toast { position: fixed; bottom: 16px; right: 16px; left: 16px; max-width: 460px; margin-left: auto; padding: 10px 14px; border-radius: 8px; background: var(--ink); color: var(--bg); display: none; z-index: 5; }
   code { font-size: 12px; }
+  small { font-size: 12px; }
 </style>
 </head>
 <body>
@@ -52,25 +79,38 @@
   <section>
     <h2>Operator sign-in</h2>
     <p class="muted">Enter the operator token configured as <code>CLAUDETRADE_OPERATOR_TOKEN</code>. It is kept for this tab only.</p>
-    <div class="row"><input id="tok" type="password" placeholder="operator token" style="flex:1"><button class="primary" onclick="signIn()">Sign in</button></div>
+    <div class="row"><input id="tok" type="password" placeholder="operator token" style="flex:1"><button class="primary" data-act="signin">Sign in</button></div>
   </section>
 </div>
 <div id="app" hidden>
-<header>
+<header><div class="bar">
   <h1>ClaudeTrade</h1>
+  <span class="tabs" id="tabs"></span>
+  <span id="masterchip"></span>
   <span id="chips" class="row"></span>
   <span style="flex:1"></span>
   <span class="muted" id="asof"></span>
-</header>
+</div></header>
 <main>
   <section class="wide" id="critical" hidden style="border-color:var(--bad);border-width:2px"></section>
+
+  <section class="wide">
+    <h2>Strategies</h2>
+    <p class="muted" style="margin:-4px 0 10px">One switch per strategy. <b>PAPER</b> trades virtual money on live prices.
+      <b>LIVE</b> trades your Groww account and unlocks only after this strategy's own paper record is complete. Switching down takes effect immediately.</p>
+    <div class="scroll" id="strategies"></div>
+  </section>
+
+  <section class="wide" id="mastercard"></section>
+
+  <div class="bookhead" id="bookhead"></div>
   <section class="wide"><h2>Portfolio</h2><div class="kpis" id="kpis"></div></section>
   <section class="wide"><h2>Controls</h2><div class="row" id="controls"></div></section>
   <section class="wide"><h2>Positions</h2><div class="scroll" id="positions"></div></section>
   <section class="wide"><h2>Pending orders</h2><div class="scroll" id="orders"></div></section>
   <section class="wide"><h2>Swing proposals awaiting approval</h2><div id="proposals"></div></section>
   <section><h2>Approvals</h2><div class="scroll" id="approvals"></div></section>
-  <section><h2>Intraday</h2><div id="intraday"></div></section>
+  <section><h2>Intraday today</h2><div class="scroll" id="intraday"></div></section>
   <section class="wide"><h2>Research</h2><div class="scroll" id="research"></div></section>
   <section><h2>Alerts</h2><div class="scroll" id="alerts"></div></section>
   <section><h2>Rejected orders &amp; reconciliation</h2><div class="scroll" id="ops"></div></section>
@@ -79,25 +119,22 @@
 </div>
 <div id="toast"></div>
 <script>
-const TOKEN_KEY = "ct-operator-token";
-let token = null;
-try { token = sessionStorage.getItem(TOKEN_KEY); } catch (e) {}
+const TOKEN_KEY = "ct-operator-token", BOOK_KEY = "ct-book", CONFIRM = "ENABLE LIVE TRADING";
+const store = { get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+                set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} } };
+let token = store.get(TOKEN_KEY), book = store.get(BOOK_KEY) || "paper", desk = null;
 const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const IST = {timeZone: "Asia/Kolkata"};
 const tm = (v) => v ? new Date(v).toLocaleTimeString("en-IN", IST) : "—";
 const dt = (v) => v ? new Date(v).toLocaleString("en-IN", IST) : "—";
 const inr = (v) => v == null || v === "" ? "—" : "₹" + Number(v).toLocaleString("en-IN", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const q = (b) => "?book=" + encodeURIComponent(b || book);
 
 function toast(msg, bad) {
   const t = $("toast"); t.textContent = msg; t.style.display = "block";
   t.style.background = bad ? "var(--bad)" : "var(--ink)";
-  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 6000);
-}
-function signIn() {
-  token = $("tok").value.trim();
-  try { sessionStorage.setItem(TOKEN_KEY, token); } catch (e) {}
-  refresh();
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 7000);
 }
 async function api(path, method = "GET", body) {
   const r = await fetch(path, {method, headers: {"Authorization": "Bearer " + token, "Content-Type": "application/json"},
@@ -107,71 +144,133 @@ async function api(path, method = "GET", body) {
   if (!r.ok) throw new Error(data.detail || r.statusText);
   return data;
 }
-async function act(path, body, confirmText) {
+async function post(path, body, confirmText) {
   if (confirmText && !confirm(confirmText)) return;
   try { const r = await api(path, "POST", body); toast(r.message || "Done"); } catch (e) { toast(e.message, true); }
   refresh();
 }
-function ask(label) { const r = prompt(label); return r && r.trim().length >= 3 ? r.trim() : null; }
-
+const ask = (label) => { const r = prompt(label); return r && r.trim().length >= 3 ? r.trim() : null; };
 function table(rows, cols) {
   if (!rows.length) return '<p class="empty">None</p>';
   return "<table><tr>" + cols.map(c => `<th>${esc(c[0])}</th>`).join("") + "</tr>" +
     rows.map(r => "<tr>" + cols.map(c => `<td>${c[1](r)}</td>`).join("") + "</tr>").join("") + "</table>";
 }
-function chip(label, state) { return `<span class="chip ${state}"><span class="dot"></span>${esc(label)}</span>`; }
+const chip = (label, state) => `<span class="chip ${state}"><span class="dot"></span>${esc(label)}</span>`;
+const btn = (label, act, data = {}, cls = "", disabled = false, title = "") =>
+  `<button class="${cls}" data-act="${act}" ${Object.entries(data).map(([k, v]) => `data-${k}="${esc(v)}"`).join(" ")}
+   ${disabled ? "disabled" : ""} ${title ? `title="${esc(title)}"` : ""}>${esc(label)}</button>`;
 
-async function showProposal(id) {
-  const el = $("p-" + id);
-  if (el.innerHTML) { el.innerHTML = ""; return; }
-  const p = await api("/api/proposals/" + encodeURIComponent(id));
-  const li = (xs) => "<ul>" + (xs || []).map(x => `<li>${esc(x)}</li>`).join("") + "</ul>";
-  el.innerHTML = `<div class="detail">
-    <div><b>${esc(p.recommendation)} ${esc(p.quantity)} × ${esc(p.symbol)}</b> · entry ${inr(p.entry_low)}–${inr(p.entry_high)} · stop ${inr(p.stop_loss)} · target ${inr(p.target_low)}–${inr(p.target_high)} · ${esc(p.horizon_days)} days</div>
-    <div class="muted">Reference price ${inr(p.reference_price)} · est. costs ${inr(p.estimated_costs)} · max loss ${inr(p.max_loss)} (a stop does not guarantee the exit price) · expires ${dt(p.expires_at)}</div>
-    <p>${esc(p.rationale)}</p>
-    <b>Evidence</b>${li(p.evidence)}<b>Risks</b>${li(p.risks)}<b>Invalidation</b>${li(p.invalidation)}
-    <div class="muted">Confidence: ${esc(p.confidence_notes)} · v${esc(p.version)} · <code>${esc(p.hash.slice(0, 16))}…</code></div>
-    <div class="row" style="margin-top:8px">
-      <button class="primary" onclick='act("/api/swing/${encodeURIComponent(id)}/approve", {version:${Number(p.version)}, hash:"${esc(p.hash)}"}, "Approve exactly this proposal (v${Number(p.version)})?")'>Approve</button>
-      <button onclick='(r => r && act("/api/swing/${encodeURIComponent(id)}/decline", {reason:r}))(ask("Reason for declining"))'>Decline</button>
-    </div></div>`;
+// ---- actions (one delegated handler; no inline JS) ------------------------------------
+const actions = {
+  signin() { token = $("tok").value.trim(); store.set(TOKEN_KEY, token); refresh(); },
+  book(d) { book = d.book; store.set(BOOK_KEY, book); refresh(); },
+  async mode(d) {
+    const label = d.label, target = d.mode;
+    if (target === "LIVE") {
+      const c = prompt(`Switch ${label} to LIVE? It will trade real money in your Groww account.\nType ${CONFIRM} to confirm.`);
+      if (c === null) return;
+      return post(`/api/strategies/${encodeURIComponent(d.key)}/mode`, {mode: "LIVE", confirm: c, reason: "operator switched to LIVE"});
+    }
+    const why = target === "OFF" ? "turn off" : "switch to PAPER";
+    if (d.current === "LIVE" && !confirm(`${label}: stop live entries now and ${why}? Open live positions keep their stops and square-off.`)) return;
+    post(`/api/strategies/${encodeURIComponent(d.key)}/mode`, {mode: target, reason: `operator: ${why}`});
+  },
+  master_on() { const c = prompt(`Turn ON the live master switch?\nType ${CONFIRM} to confirm.`); if (c !== null) post("/api/live/authorise", {confirm: c}); },
+  master_off() { post("/api/live/revoke", null, "Turn OFF the live master switch? Every LIVE strategy drops to PAPER; open live positions are still managed."); },
+  approve_limits(d) { post("/api/risk/approve" + q(d.book), null, `Approve the ${d.book} book's limits?\n${d.limits}`); },
+  kill() { const r = ask(`Reason for kill switch (${book} book)`); if (r) post("/api/controls/kill-switch" + q(), {reason: r}); },
+  kill_all() { const r = ask("Reason for kill switch in ALL books"); if (r) post("/api/controls/kill-all", {reason: r}); },
+  kill_reset() { const r = ask("Reason for reset (positions must be reconciled)"); if (r) post("/api/controls/kill-switch/reset" + q(), {reason: r}); },
+  pause() { const r = ask("Reason for pausing entries"); if (r) post("/api/controls/pause" + q(), {reason: r}); },
+  resume() { const r = ask("Reason for resuming entries"); if (r) post("/api/controls/resume" + q(), {reason: r}); },
+  squareoff() { const r = ask(`Reason for manual square-off (${book} book)`); if (r) post("/api/square-off" + q(), {reason: r}); },
+  reconcile() { post("/api/positions/reconcile" + q()); },
+  test_alert() { post("/api/alerts/test" + q()); },
+  ack(d) { post(`/api/alerts/${encodeURIComponent(d.id)}/ack` + q(d.book), null, "Acknowledge? Repeats stop; the kill switch stays on."); },
+  async review(d) {
+    const el = $("p-" + d.id);
+    if (el.innerHTML) { el.innerHTML = ""; return; }
+    const p = await api(`/api/proposals/${encodeURIComponent(d.id)}` + q());
+    const li = (xs) => "<ul>" + (xs || []).map(x => `<li>${esc(x)}</li>`).join("") + "</ul>";
+    el.innerHTML = `<div class="detail">
+      <div><b>${esc(p.recommendation)} ${esc(p.quantity)} × ${esc(p.symbol)}</b> · entry ${inr(p.entry_low)}–${inr(p.entry_high)} · stop ${inr(p.stop_loss)} · target ${inr(p.target_low)}–${inr(p.target_high)} · ${esc(p.horizon_days)} days</div>
+      <div class="muted">Reference ${inr(p.reference_price)} · est. costs ${inr(p.estimated_costs)} · max loss ${inr(p.max_loss)} (a stop does not guarantee the exit price) · expires ${dt(p.expires_at)}</div>
+      <p>${esc(p.rationale)}</p><b>Evidence</b>${li(p.evidence)}<b>Risks</b>${li(p.risks)}<b>Invalidation</b>${li(p.invalidation)}
+      <div class="muted">Confidence: ${esc(p.confidence_notes)} · v${esc(p.version)} · <code>${esc(p.hash.slice(0, 16))}…</code></div>
+      <div class="row" style="margin-top:8px">${btn("Approve", "approve", {id: d.id, version: p.version, hash: p.hash}, "primary")}${btn("Decline", "decline", {id: d.id})}</div></div>`;
+  },
+  approve(d) { post(`/api/swing/${encodeURIComponent(d.id)}/approve` + q(), {version: Number(d.version), hash: d.hash},
+                    `Approve exactly this proposal (v${d.version}) in the ${book.toUpperCase()} book?`); },
+  decline(d) { const r = ask("Reason for declining"); if (r) post(`/api/swing/${encodeURIComponent(d.id)}/decline` + q(), {reason: r}); },
+  execute(d) { post(`/api/swing/approvals/${encodeURIComponent(d.id)}/execute` + q(), null,
+                    `Place this approved order now in the ${book.toUpperCase()} book? It is revalidated first.`); },
+};
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-act]");
+  if (b && !b.disabled && actions[b.dataset.act]) actions[b.dataset.act](b.dataset);
+});
+$("tok").addEventListener("keydown", (e) => { if (e.key === "Enter") actions.signin(); });
+
+// ---- rendering -----------------------------------------------------------------------
+function renderDesk(o) {
+  if (!o.books.includes(book)) book = o.books[0];
+  $("tabs").innerHTML = o.books.map(b => `<button class="${b}" data-act="book" data-book="${b}" aria-pressed="${b === book}">${b === "live" ? "Live · real money" : "Paper"}</button>`).join("");
+  $("masterchip").innerHTML = o.live_enabled ? `<span class="switch ${o.live_master ? "on" : "off"}">LIVE MASTER ${o.live_master ? "ON" : "OFF"}</span>` : "";
+  $("strategies").innerHTML = table(o.strategies, [
+    ["Strategy", r => `<b>${esc(r.family === "SWING" ? "Swing" : r.family)}</b><br><code>${esc(r.label)}</code><br>` +
+      (r.family === "SWING" ? '<span class="badge">Claude proposals, you approve each</span>'
+        : r.eligible ? '<span class="badge good">eligible</span>' : `<span class="badge warn" title="${esc(r.eligibility_failures.join("; "))}">not eligible: paper trial only</span>`)],
+    ["Switch", r => {
+      const liveBlocked = r.mode !== "LIVE" && r.live_blockers.length > 0, noLive = !o.live_enabled;
+      return `<span class="seg">${["OFF", "PAPER", "LIVE"].map(m => {
+        const dis = m === "LIVE" && (noLive || (r.mode !== "PAPER" && r.mode !== "LIVE") || liveBlocked);
+        const title = m === "LIVE" ? (noLive ? "live book not enabled" : r.mode === "OFF" ? "switch to PAPER first" : r.live_blockers.join("\n")) : "";
+        return `<button class="${m}" aria-pressed="${r.mode === m}" data-act="mode" data-key="${esc(r.key)}" data-mode="${m}" data-current="${r.mode}"
+                 data-label="${esc(r.label)}" ${dis ? "disabled" : ""} title="${esc(title)}">${m}</button>`; }).join("")}</span>
+        ${r.changed_by ? `<br><small class="muted">${esc(r.changed_by)} · ${dt(r.changed_at)}</small>` : ""}`; }],
+    ["Paper record toward LIVE", r => {
+      if (!r.gate) return '<span class="muted">starts when switched to PAPER</span>';
+      const g = r.gate, hp = Math.min(1, g.paper_hours / g.required_hours), sp = Math.min(1, g.clean_sessions / g.required_sessions);
+      return `<div class="progress ${hp >= 1 ? "done" : ""}"><i style="width:${hp * 100}%"></i></div><small>${esc(g.paper_hours)} / ${esc(g.required_hours)} h</small>
+              <div class="progress ${sp >= 1 ? "done" : ""}"><i style="width:${sp * 100}%"></i></div><small>${esc(g.clean_sessions)} / ${esc(g.required_sessions)} clean sessions</small>`; }],
+    ["Today", r => r.family === "SWING" ? `<span class="muted">${o.swing_book ? "proposals go to " + esc(o.swing_book) : "Claude proposals off"}</span>`
+      : Object.entries(r.books).map(([b, v]) => `<div><b class="${b === "live" ? "bad" : ""}">${esc(b)}</b> ${v.active ? '<span class="good">running</span>' : '<span class="muted">idle</span>'}
+          · P&amp;L <span class="${Number(v.pnl_today) < 0 ? "bad" : ""}">${inr(v.pnl_today)}</span></div>`).join("")],
+    ["Before LIVE", r => r.mode === "LIVE" ? '<span class="bad">trading real money</span>'
+      : r.mode === "PAPER" ? (r.live_blockers.length ? `<small>${r.live_blockers.map(esc).join("<br>")}</small>` : '<span class="good">ready: switch to LIVE</span>')
+      : '<span class="muted">—</span>'],
+  ]);
+  const ml = o.live_enabled;
+  $("mastercard").hidden = !ml;
+  if (ml) $("mastercard").innerHTML = `<h2>Live master switch</h2><div class="master">
+      <span class="switch ${o.live_master ? "on" : "off"}">${o.live_master ? "ON — strategies may be switched to LIVE" : "OFF — no live entries"}</span>
+      ${o.live_master ? btn("Turn OFF", "master_off", {}, "danger") : btn("Turn ON…", "master_on", {}, "danger", !o.live_risk_approved, o.live_risk_approved ? "" : "approve live limits first")}
+      <span class="muted">${o.live_risk_approved ? "Live limits approved." : "Live limits not approved yet."} Needs 72 h of paper trading with 3 clean sessions and an alert channel. Turning it off drops LIVE strategies to PAPER; open live positions are still managed.</span></div>`;
 }
 
-function render(d) {
-  const P = d.portfolio, O = d.operations, I = d.intraday;
+function renderBook(d, audit) {
+  const P = d.portfolio, O = d.operations, I = d.intraday, live = d.book === "live", rc = d.risk_config;
+  $("bookhead").className = "bookhead " + d.book;
+  $("bookhead").innerHTML = live ? "LIVE BOOK — real money in your Groww account" : "PAPER BOOK — virtual money, live prices";
   $("asof").textContent = "as of " + tm(d.as_of) + " IST";
   $("chips").innerHTML = [
-    chip(d.mode, d.mode === "LIVE" ? "warn" : "ok"),
-    chip(d.live_authorised ? "LIVE AUTHORISED" : "live off", d.live_authorised ? "warn" : ""),
     chip(O.kill_switch ? "KILL SWITCH ON" : "kill switch off", O.kill_switch ? "bad" : "ok"),
     chip(O.entries_paused ? "entries paused" : "entries enabled", O.entries_paused ? "warn" : "ok"),
-    chip("broker", O.broker_healthy ? "ok" : "bad"),
-    chip("market data", O.market_data_healthy ? "ok" : "bad"),
-    chip("reconciled", O.reconciliation_ok ? "ok" : "bad"),
-    chip("audit chain", O.audit_chain_intact ? "ok" : "bad"),
+    chip("broker", O.broker_healthy ? "ok" : "bad"), chip("market data", O.market_data_healthy ? "ok" : "bad"),
+    chip("reconciled", O.reconciliation_ok ? "ok" : "bad"), chip("audit chain", O.audit_chain_intact ? "ok" : "bad"),
     chip(O.alert_channel_configured ? "alerts → phone" : "NO ALERT CHANNEL", O.alert_channel_configured ? "ok" : "warn"),
   ].join("");
   const k = [["Cash", P.cash], ["Available", P.available], ["Reserved", P.reserved], ["Committed", P.committed],
              ["Realised today", P.realised_pnl_today], ["Unrealised", P.unrealised_pnl], ["Charges paid", P.charges_paid]];
   $("kpis").innerHTML = k.map(([l, v]) => `<div class="kpi"><b class="${Number(v) < 0 ? "bad" : ""}">${inr(v)}</b><span>${l}</span></div>`).join("") +
-    `<div class="kpi"><b>${inr(d.risk_config.limits.max_daily_loss)}</b><span>Daily loss limit</span></div>`;
-
-  const rc = d.risk_config;
-  $("controls").innerHTML = `
-    <button class="danger" onclick='(r => r && act("/api/controls/kill-switch", {reason:r}))(ask("Reason for kill switch"))'>Kill switch</button>
-    <button onclick='(r => r && act("/api/controls/kill-switch/reset", {reason:r}))(ask("Reason for reset (positions must be reconciled)"))' ${O.kill_switch ? "" : "disabled"}>Reset kill switch</button>
-    <button onclick='(r => r && act("/api/controls/pause", {reason:r}))(ask("Reason for pausing entries"))'>Pause entries</button>
-    <button onclick='(r => r && act("/api/controls/resume", {reason:r}))(ask("Reason for resuming entries"))' ${O.entries_paused ? "" : "disabled"}>Resume entries</button>
-    <button onclick='(r => r && act("/api/square-off", {reason:r}))(ask("Reason for manual square-off"))'>Square off intraday</button>
-    <button onclick='act("/api/positions/reconcile")'>Reconcile now</button>
-    <button onclick='act("/api/alerts/test")'>Send test alert</button>
-    <span style="flex:1"></span>
-    <span class="muted">Risk config <code>${esc(rc.version)}</code> ${rc.approved_by ? "approved by " + esc(rc.approved_by) : '<b class="warn">not approved</b>'}</span>
-    <button onclick='act("/api/risk/approve", null, "Approve these limits? " + ${JSON.stringify(JSON.stringify(rc.limits))})' ${rc.approved_by ? "disabled" : ""}>Approve limits</button>
-    ${d.mode === "LIVE" ? (d.live_authorised
-      ? `<button class="danger" onclick='act("/api/live/revoke", null, "Revoke live trading?")'>Revoke live</button>`
-      : `<button class="danger" onclick='(c => c && act("/api/live/authorise", {confirm:c}))(prompt("Type ENABLE LIVE TRADING to authorise live orders"))'>Authorise live</button>`) : ""}`;
+    `<div class="kpi"><b>${inr(rc.limits.max_daily_loss)}</b><span>Daily loss limit</span></div><div class="kpi"><b>${inr(rc.limits.max_order_value)}</b><span>Max per order</span></div>`;
+  $("controls").innerHTML =
+    btn("Kill switch", "kill", {}, "danger") + btn("Kill ALL books", "kill_all", {}, "danger") +
+    btn("Reset kill switch", "kill_reset", {}, "", !O.kill_switch) + btn("Pause entries", "pause") +
+    btn("Resume entries", "resume", {}, "", !O.entries_paused) + btn("Square off intraday", "squareoff") +
+    btn("Reconcile now", "reconcile") + btn("Send test alert", "test_alert") +
+    `<span style="flex:1"></span><span class="muted">Limits <code>${esc(rc.version)}</code> ${rc.approved_by ? "approved by " + esc(rc.approved_by) : '<b class="warn">not approved</b>'}</span>` +
+    btn("Approve limits", "approve_limits", {book: d.book, limits: JSON.stringify(rc.limits)}, "", !!rc.approved_by);
 
   $("positions").innerHTML = table(P.positions, [
     ["Symbol", r => esc(r.symbol)], ["Mode", r => esc(r.mode)], ["Qty", r => esc(r.qty)], ["Avg", r => inr(r.avg)],
@@ -179,38 +278,31 @@ function render(d) {
     ["Unrealised", r => `<span class="${Number(r.unrealised) < 0 ? "bad" : "good"}">${inr(r.unrealised)}</span>`]]);
   $("orders").innerHTML = table(P.pending_orders, [
     ["Id", r => `<code>${esc(r.id)}</code>`], ["Symbol", r => esc(r.symbol)], ["Side", r => esc(r.side)],
-    ["Qty", r => `${esc(r.filled)}/${esc(r.qty)}`], ["Status", r => esc(r.status)], ["Mode", r => esc(r.mode)]]);
-
+    ["Filled", r => `${esc(r.filled)}/${esc(r.qty)}`], ["Status", r => esc(r.status)], ["Mode", r => esc(r.mode)]]);
   const props = d.swing.awaiting_approval;
   $("proposals").innerHTML = props.length ? props.map(p => `<div style="padding:6px 0;border-bottom:1px solid var(--line)">
       <div class="row"><b>${esc(p.rec)} ${esc(p.symbol)}</b><span class="muted">v${esc(p.v)} · expires ${dt(p.expires)}</span>
-      <span style="flex:1"></span><button onclick='showProposal(${JSON.stringify(p.id)})'>Review</button></div>
-      <div id="p-${esc(p.id)}"></div></div>`).join("") : '<p class="empty">Nothing awaiting approval</p>';
+      <span style="flex:1"></span>${btn("Review", "review", {id: p.id})}</div><div id="p-${esc(p.id)}"></div></div>`).join("")
+    : '<p class="empty">Nothing awaiting approval in this book</p>';
   $("approvals").innerHTML = table(d.swing.approvals, [
     ["Approval", r => `<code>${esc(r.id)}</code>`], ["Status", r => esc(r.status)], ["By", r => esc(r.by)], ["Note", r => esc(r.note)],
-    ["", r => r.status === "ACTIVE" ? `<button class="primary" onclick='act("/api/swing/approvals/${encodeURIComponent(r.id)}/execute", null, "Place this approved order now? It will be revalidated first.")'>Execute</button>` : ""]]);
-
+    ["", r => r.status === "ACTIVE" ? btn("Execute", "execute", {id: r.id}, live ? "danger" : "primary") : ""]]);
   const sq = I.square_off;
-  $("intraday").innerHTML = `<table>
-    <tr><th>Strategy</th><td>${I.strategy ? `<code>${esc(I.strategy)}</code>` : '<span class="muted">none active today</span>'}</td></tr>
-    <tr><th>Validation</th><td>${esc(I.validation || "—")}</td></tr>
-    <tr><th>Invalidated</th><td>${esc(I.invalidated || "no")}</td></tr>
-    <tr><th>Square-off</th><td>${sq.started ? (sq.verified_flat ? '<span class="good">verified flat</span>' : '<span class="bad">NOT FLAT</span>') : "not started"}${sq.last_error ? " · " + esc(sq.last_error) : ""}</td></tr>
-    <tr><th>Universe</th><td>${esc((d.universe || []).join(", "))}</td></tr></table>`;
-
+  $("intraday").innerHTML = (I.strategies.length ? table(I.strategies, [["Running", r => `<code>${esc(r.label)}</code>`],
+      ["Validation", r => esc(r.validation)], ["P&L today", r => inr(I.strategy_pnl[r.label])]]) : '<p class="empty">No strategy running in this book today</p>') +
+    `<p>Square-off: ${sq.started ? (sq.verified_flat ? '<span class="good">verified flat</span>' : '<span class="bad">NOT FLAT</span>') : "not started"}${sq.failed ? ' · <span class="bad">missed deadline today</span>' : ""}</p>
+     <p class="muted">Universe: ${esc((d.universe || []).join(", "))}</p>`;
   const research = Object.entries(d.research);
   $("research").innerHTML = research.length ? table(research.map(([h, v]) => ({h, ...v})), [
     ["Version", r => `<code>${esc(r.label)}</code>`], ["Status", r => `<span class="${r.status === "ELIGIBLE" ? "good" : "muted"}">${esc(r.status)}</span>`],
-    ["Why not eligible", r => esc((r.failures || []).join("; "))],
-    ["", r => r.status === "ELIGIBLE" ? `<button onclick='releaseVersion(${JSON.stringify(r.label)})'>Release…</button>` : ""]])
-    : '<p class="empty">No research runs yet</p>';
+    ["Why not eligible", r => esc((r.failures || []).join("; "))]]) + '<p class="muted">Use the Strategies switches above to paper-trade or go live.</p>'
+    : '<p class="empty">No research runs yet (they run after 16:00 IST)</p>';
 
   const crit = O.unacked_critical || [];
   $("critical").hidden = !crit.length;
-  $("critical").innerHTML = crit.length ? `<h2 class="bad">Critical — action required</h2>` + crit.map(a =>
-    `<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b>${tm(a.ts)}</b> · sent ${esc(a.sends)}×
-     <p>${esc(a.msg)}</p><button class="danger" onclick='act("/api/alerts/${encodeURIComponent(a.id)}/ack", null, "Acknowledge? Repeats stop; the kill switch stays on.")'>Acknowledge</button></div>`).join("")
-    + `<p class="muted">Procedure: docs/RUNBOOK.md §3</p>` : "";
+  $("critical").innerHTML = crit.length ? `<h2 class="bad">Critical — action required (${esc(d.book)} book)</h2>` + crit.map(a =>
+    `<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b>${tm(a.ts)}</b> · sent ${esc(a.sends)}×<p>${esc(a.msg)}</p>${btn("Acknowledge", "ack", {id: a.id, book: d.book}, "danger")}</div>`).join("")
+    + '<p class="muted">Procedure: docs/RUNBOOK.md §3</p>' : "";
   $("alerts").innerHTML = O.alerts.length ? table(O.alerts.slice().reverse(), [
     ["Time", r => tm(r.ts)], ["Severity", r => `<span class="${r.sev === "INFO" ? "" : "bad"}">${esc(r.sev)}</span>`],
     ["Message", r => esc(r.msg)], ["Ack", r => r.sev === "CRITICAL" ? (r.acked_by ? esc(r.acked_by) : '<b class="bad">pending</b>') : ""]])
@@ -218,24 +310,19 @@ function render(d) {
   $("ops").innerHTML = (O.mismatches.length ? `<p class="bad">${O.mismatches.map(esc).join("<br>")}</p>` : '<p class="good">Book matches broker</p>') +
     table(O.rejected_orders, [["Order", r => `<code>${esc(r.id)}</code>`], ["Reason", r => esc(r.reason)]]) +
     (d.scheduler.errors.length ? `<p class="bad">${d.scheduler.errors.map(esc).join("<br>")}</p>` : "");
-}
-
-async function releaseVersion(label) {
-  const s = await api("/api/strategies");
-  const v = s.versions.find(x => x.label === label);
-  const day = prompt("Release " + label + " for which session date? (YYYY-MM-DD)", new Date(Date.now() + 864e5).toISOString().slice(0, 10));
-  if (v && day) act("/api/strategies/" + v.hash + "/release", {session_date: day}, "Release " + label + " for " + day + "?");
+  $("audit").innerHTML = table(audit.slice().reverse(), [
+    ["#", r => esc(r.seq)], ["Time", r => tm(r.ts)], ["Actor", r => esc(r.actor)], ["Action", r => esc(r.action)],
+    ["Details", r => `<code>${esc(JSON.stringify(r.payload).slice(0, 220))}</code>`]]);
 }
 
 async function refresh() {
   if (!token) { $("login").hidden = false; return; }
   try {
-    const [d, audit] = await Promise.all([api("/api/dashboard"), api("/api/audit?limit=40")]);
+    desk = await api("/api/desk");
+    renderDesk(desk);
+    const [d, audit] = await Promise.all([api("/api/dashboard" + q()), api("/api/audit?limit=40&book=" + book)]);
     $("login").hidden = true; $("app").hidden = false;
-    render(d);
-    $("audit").innerHTML = table(audit.slice().reverse(), [
-      ["#", r => esc(r.seq)], ["Time", r => tm(r.ts)], ["Actor", r => esc(r.actor)],
-      ["Action", r => esc(r.action)], ["Details", r => `<code>${esc(JSON.stringify(r.payload).slice(0, 220))}</code>`]]);
+    renderBook(d, audit);
   } catch (e) { if (token) toast(e.message, true); }
 }
 refresh();

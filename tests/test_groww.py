@@ -158,6 +158,7 @@ def test_feed_translates_quotes_and_candles(app, fake, clock):
                             "day_change": 1.5, "last_trade_time": now_ms - 2000}
     fake.quotes["BRAVO"] = {"last_price": 0}
     feed = GrowwFeed(fake, app.market_data, clock, limiter=RateLimiter(sleep=lambda s: None))
+    feed.min_interval_s = 0  # no poll cache: each poll hits the API
     assert feed.poll(["ALPHA", "BRAVO"]) == 1
     v = app.market_data.validate_quote("ALPHA", TradeMode.INTRADAY)
     assert v.valid and v.quote.prev_close == D("500.0") and v.quote.source == "groww"

@@ -27,19 +27,21 @@ from typing import Any
 from .app import ClaudeTrade
 from .backtest import BacktestConfig, walk_forward
 from .lifecycle import SessionOutcome
-from .models import OrderRequest, OrderType, Product, Side, TradeMode
+from .models import OperatingMode, OrderRequest, OrderType, Product, Side, TradeMode
 from .settings import Settings
 from .strategies import REGISTRY
 
 
 class Scheduler:
     def __init__(self, app: ClaudeTrade, settings: Settings, feed: Any | None = None,
-                 research_loader: Callable[[], dict] | None = None, agent_runner: Callable[[str], Any] | None = None):
+                 research_loader: Callable[[], dict] | None = None, agent_runner: Callable[[str], Any] | None = None,
+                 strategy_source: Callable[[], list] | None = None):
         self.app = app
         self.settings = settings
         self.feed = feed
         self.research_loader = research_loader
         self.agent_runner = agent_runner
+        self.strategy_source = strategy_source  # desk toggles -> [(StrategyVersion, operator, paper_only)]
         self.store = app.persistence.store if app.persistence else None
         self._mem_done: set[str] = set()
         self._stop = threading.Event()
@@ -130,19 +132,39 @@ class Scheduler:
         self.app.audit.record("scheduler", "PREOPEN", broker_healthy=self.app.broker.is_healthy())
 
     def validate(self) -> str:
+        """Validate every strategy released for today in this book; activate those APPROVED.
+        With a ``strategy_source`` (the desk's toggles) the toggles act as standing releases."""
         app = self.app
         today = app.clock().date()
-        releases = [r for r in app.strategies.releases.values() if r.effective_session == today]
+        if self.strategy_source is not None:
+            for sv, operator, paper_only in self.strategy_source():
+                app.strategies.versions.setdefault(sv.content_hash, sv)
+                if not any(r.version_hash == sv.content_hash and r.effective_session == today
+                           for r in app.strategies.releases.values()):
+                    app.strategies.release(sv.content_hash, today, f"toggle:{operator}", paper_only=paper_only)
+        releases = {r.version_hash: r for r in sorted(app.strategies.releases.values(), key=lambda r: r.approved_at)
+                    if r.effective_session == today}
         if not releases:
             app.audit.record("scheduler", "NO_RELEASE", date=today.isoformat(),
                              note="no strategy released for today: intraday stands down")
             return "NO_RELEASE"
-        rel = sorted(releases, key=lambda r: r.approved_at)[-1]
         self._refresh_quotes()
-        v = app.strategies.validate_for_session(rel, app.market_data, list(self.settings.universe), app.risk_config, app.session)
-        if v.outcome is SessionOutcome.APPROVED:
-            app.intraday.activate(app.strategies.versions[rel.version_hash], v, list(self.settings.universe))
-        return v.outcome.value
+        outcomes = {}
+        for h, rel in releases.items():
+            if h in app.intraday.active:
+                outcomes[h] = SessionOutcome.APPROVED.value
+                continue
+            if rel.paper_only and app.mode is OperatingMode.LIVE:
+                outcomes[h] = SessionOutcome.REJECTED.value  # trials never trade real money
+                continue
+            v = app.strategies.validate_for_session(rel, app.market_data, list(self.settings.universe),
+                                                    app.risk_config, app.session)
+            if v.outcome is SessionOutcome.APPROVED:
+                app.intraday.activate(app.strategies.versions[h], v, list(self.settings.universe))
+            outcomes[h] = v.outcome.value
+        if SessionOutcome.DEFERRED.value in outcomes.values():
+            return SessionOutcome.DEFERRED.value
+        return ",".join(sorted(set(outcomes.values())))
 
     def _refresh_quotes(self) -> None:
         if self.feed is None:
@@ -156,7 +178,7 @@ class Scheduler:
         if hasattr(app.broker, "heartbeat"):
             app.broker.heartbeat()
         self._refresh_quotes()
-        if self.feed is not None and app.intraday.strategy_version is not None:
+        if self.feed is not None and app.intraday.active:
             for s in self.settings.universe:
                 try:
                     app.bars[s] = self.feed.today_bars(s)
@@ -197,7 +219,8 @@ class Scheduler:
         app.audit.record("scheduler", "EOD_REPORT", date=report["date"], mode=report["mode"],
                          verified_flat=report["verified_flat"], square_off_failed=report["square_off_failed"],
                          reconciliation_ok=report["reconciliation_ok"], mismatches=mismatches,
-                         orders=report["orders"], realised_pnl=report["realised_pnl"])
+                         orders=report["orders"], realised_pnl=report["realised_pnl"],
+                         strategies=report["strategies"], strategy_pnl=report["strategy_pnl"])
         if self.store is not None:
             self.store.put("eod_report", app.clock().date().isoformat(), report)
             self.store.checkpoint_wal()  # make the day's evidence readable from a read-only mount

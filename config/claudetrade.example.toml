@@ -3,9 +3,13 @@
 # editing this file requires re-approval). Live trading additionally needs a runtime
 # authorisation that is never restored after a restart.
 
-mode = "PAPER"            # RESEARCH | PAPER | LIVE
+# `claudetrade serve` runs the desk: a PAPER book (virtual money, live Groww prices) and,
+# if live_enabled, a LIVE book (your Groww account), each with its own database and capital.
+# Each strategy is switched OFF / PAPER / LIVE from the dashboard.
 data_source = "groww"     # groww: live quotes + candles from Groww (paper fills use them) | none
-db_path = "var/claudetrade.db"
+paper_db_path = "var/paper.db"
+live_db_path = "var/live.db"
+live_enabled = false      # true: build the live book (needs Groww credentials). Strategies still start OFF.
 tick_seconds = 15
 agent_daily_review = false  # true: Claude reviews after close and may file swing proposals
 
@@ -51,7 +55,7 @@ cache_dir = "var/history"
 [live_gate]                # Operator decision 2026-10-22: 72 hours of paper trading before live
 min_paper_hours = 72
 min_clean_sessions = 3     # and the last 3 paper sessions must be clean (flat on time, reconciled, no job failures)
-paper_evidence_db = "/paper/var/claudetrade.db"   # the PAPER deployment's database (mounted read-only)
+# paper_evidence_db defaults to paper_db_path above (same service)
 require_alert_channel = true
 
 [eligibility]              # PRD §18 Q4 — live-pilot qualification thresholds

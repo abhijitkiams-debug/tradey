@@ -150,17 +150,28 @@ class IntradayEngine:
         self.session = session
         self.bars = bars_source
         self.clock = clock
-        self.strategy_version: StrategyVersion | None = None
-        self.validation: SessionValidation | None = None
+        # Several frozen strategies can run in one book; each was validated for today on its own.
+        self.active: dict[str, tuple[StrategyVersion, SessionValidation]] = {}
+        self.ran_today: dict[str, str] = {}  # hash -> label, anything active at any point today
+        self.owner: dict[str, str] = {}  # symbol -> label of the strategy that opened the position
         self.universe: list[str] = []
-        self._acted_signals: set[tuple[str, int]] = set()
+        self._acted_signals: set[tuple[str, str, int]] = set()
         self.square_off = SquareOffStatus()
         self.invalidated: str | None = None
 
+    # Back-compat views: "the" strategy is the first active one.
+    @property
+    def strategy_version(self) -> StrategyVersion | None:
+        return next(iter(self.active.values()))[0] if self.active else None
+
+    @property
+    def validation(self) -> SessionValidation | None:
+        return next(iter(self.active.values()))[1] if self.active else None
+
     def reset_for_day(self) -> None:
-        """Start-of-day reset: yesterday's activation, signals and square-off state never carry over."""
-        self.strategy_version = None
-        self.validation = None
+        """Start-of-day reset: yesterday's activations, signals and square-off state never carry over."""
+        self.active = {}
+        self.ran_today = {}
         self.universe = []
         self._acted_signals = set()
         self.square_off = SquareOffStatus()
@@ -168,11 +179,20 @@ class IntradayEngine:
 
     def activate(self, sv: StrategyVersion, validation: SessionValidation, universe: list[str]) -> bool:
         if validation.outcome is not SessionOutcome.APPROVED or validation.version_hash != sv.content_hash:
-            self.monitor.alert("INFO", f"intraday not activated: {validation.outcome.value} {list(validation.reasons)}")
+            self.monitor.alert("INFO", f"{sv.label} not activated: {validation.outcome.value} {list(validation.reasons)}")
             return False
-        self.strategy_version, self.validation, self.universe = sv, validation, universe
-        self.ex.audit.record("engine", "INTRADAY_ACTIVATED", strategy=sv.label, universe=universe)
+        self.active[sv.content_hash] = (sv, validation)
+        self.ran_today[sv.content_hash] = sv.label
+        self.universe = list(universe)
+        self.ex.audit.record("engine", "INTRADAY_ACTIVATED", strategy=sv.label, universe=list(universe))
         return True
+
+    def deactivate(self, version_hash: str, reason: str) -> bool:
+        """No new entries from this strategy; its open positions keep their exits and square-off."""
+        item = self.active.pop(version_hash, None)
+        if item is not None:
+            self.ex.audit.record("engine", "INTRADAY_DEACTIVATED", strategy=item[0].label, reason=reason)
+        return item is not None
 
     def invalidate(self, reason: str) -> None:
         """Stop new entries for the rest of the session; existing positions follow the exit policy."""
@@ -188,7 +208,7 @@ class IntradayEngine:
             self.run_square_off()
             return
         self._manage_exits()
-        if self.strategy_version and not self.invalidated:
+        if self.active and not self.invalidated:
             self._entries(now)
 
     def _health_checks(self, now: datetime) -> None:
@@ -229,8 +249,7 @@ class IntradayEngine:
                 self._exit(pos.symbol, abs(pos.quantity), reason)
 
     def _entries(self, now: datetime) -> None:
-        sv = self.strategy_version
-        strat = sv.instantiate()
+        todays: dict[str, pd.DataFrame] = {}
         for sym in self.universe:
             bars = self.bars(sym)
             if bars is None or bars.empty:
@@ -238,14 +257,22 @@ class IntradayEngine:
             today = bars[bars.index.date == now.date()]
             # Only completed bars: drop the bar still forming
             today = today[today.index + pd.Timedelta(minutes=1) <= pd.Timestamp(now)]
-            if len(today) < 2:
-                continue
-            last = len(today) - 1
-            for sig in strat.signals(today):
-                if sig.bar_index != last or (sym, sig.bar_index) in self._acted_signals:
-                    continue
-                self._acted_signals.add((sym, sig.bar_index))
-                self._enter(sym, sig, sv)
+            if len(today) >= 2:
+                todays[sym] = today
+        for h, (sv, _v) in list(self.active.items()):
+            strat = sv.instantiate()
+            for sym, today in todays.items():
+                last = len(today) - 1
+                for sig in strat.signals(today):
+                    key = (h[:12], sym, sig.bar_index)
+                    if sig.bar_index != last or key in self._acted_signals:
+                        continue
+                    self._acted_signals.add(key)
+                    if sym in self.owner and not self.ex.portfolio.position(sym, TradeMode.INTRADAY).is_flat:
+                        self.ex.audit.record("engine", "SIGNAL_SKIPPED", symbol=sym, strategy=sv.label,
+                                             reason=f"position already held by {self.owner[sym]}")
+                        continue
+                    self._enter(sym, sig, sv)
 
     def _enter(self, sym: str, sig, sv: StrategyVersion) -> None:
         v = self.md.validate_quote(sym, TradeMode.INTRADAY)
@@ -264,14 +291,16 @@ class IntradayEngine:
             mode=TradeMode.INTRADAY, stop_loss=stop, strategy_version=sv.label, origin="strategy",
         )
         res = self.ex.execute(req)
-        if res.order is not None and sig.target is not None:
-            self.ex.portfolio.position(sym, TradeMode.INTRADAY).target = Decimal(str(round(sig.target, 2)))
+        if res.order is not None:
+            self.owner[sym] = sv.label
+            if sig.target is not None:
+                self.ex.portfolio.position(sym, TradeMode.INTRADAY).target = Decimal(str(round(sig.target, 2)))
 
     def _exit(self, sym: str, qty: int, reason: str):
         req = OrderRequest(
             client_request_id=f"ix-{uuid.uuid4().hex[:12]}",
             symbol=sym, side=Side.SELL, quantity=qty, order_type=OrderType.MARKET, product=Product.MIS,
-            mode=TradeMode.INTRADAY, is_exit=True, origin="system",
+            mode=TradeMode.INTRADAY, is_exit=True, origin="system", strategy_version=self.owner.get(sym),
         )
         res = self.ex.execute(req)
         self.ex.audit.record("engine", "EXIT_REQUESTED", symbol=sym, qty=qty, reason=reason, result=res.message)
@@ -326,14 +355,39 @@ class IntradayEngine:
                 self.monitor.alert("CRITICAL", square_off_failure_message(open_desc, local_open, now))
         return st
 
+    def strategy_pnl(self, day=None) -> dict[str, Decimal]:
+        """Approximate per-strategy P&L for a day: sells - buys - charges + open qty x LTP."""
+        day = day or self.clock().date()
+        out: dict[str, Decimal] = {}
+        held: dict[tuple[str, str], int] = {}
+        for o in self.ex.orders.values():
+            label = o.request.strategy_version
+            if not label or o.request.mode is not TradeMode.INTRADAY or not o.created_at or o.created_at.date() != day:
+                continue
+            gross = o.average_price * o.filled_quantity
+            out[label] = out.get(label, Decimal("0")) + (gross if o.request.side is Side.SELL else -gross)
+            if o.filled_quantity:
+                charges = self.ex.risk.costs.charges(o.request.side, o.request.product, o.filled_quantity, o.average_price)
+                out[label] -= charges
+            k = (label, o.request.symbol)
+            held[k] = held.get(k, 0) + (o.filled_quantity if o.request.side is Side.BUY else -o.filled_quantity)
+        for (label, sym), q in held.items():
+            if q:
+                v = self.md.validate_quote(sym, TradeMode.INTRADAY)
+                if v.quote is not None:
+                    out[label] += v.quote.ltp * q
+        return {k: v.quantize(Decimal("0.01")) for k, v in out.items()}
+
     def end_of_day_report(self) -> dict:
         now = self.clock()
         orders = [o for o in self.ex.orders.values() if o.request.mode is TradeMode.INTRADAY
                   and o.created_at is not None and o.created_at.date() == now.date()]
         return {
             "date": now.date().isoformat(),
-            "strategy": self.strategy_version.label if self.strategy_version else None,
+            "strategy": ", ".join(self.ran_today.values()) or None,
+            "strategies": sorted(self.ran_today),
             "validation": self.validation.outcome.value if self.validation else None,
+            "strategy_pnl": {k: str(v) for k, v in self.strategy_pnl().items()},
             "orders": len(orders),
             "rejected": sum(o.status.value == "REJECTED" for o in orders),
             "realised_pnl": str(self.ex.portfolio.realised_pnl_on(now.date())),

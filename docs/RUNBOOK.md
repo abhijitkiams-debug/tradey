@@ -42,7 +42,18 @@ Write down here, during setup, how you'll reach Groww if the app and website bot
 
 - Groww support / dealing desk: `________________` (from the Groww app's Help section)
 
-## 2. Daily routine
+## 2. Switching strategies
+
+- **Start paper trading a strategy:** Strategies → PAPER. Its 72-hour clock starts now, and its
+  paper record (hours and clean sessions) appears next to the switch.
+- **Go live:** first approve the live limits (Live tab → Approve limits). Then turn on the live
+  master switch. Then, once the strategy's own record shows 72 h and 3/3 clean sessions, press
+  LIVE and type `ENABLE LIVE TRADING`.
+- **Pull back:** press PAPER or OFF. Live entries stop immediately; any open live position is
+  still exited by its stop or by square-off. If in doubt, use **Kill ALL books**.
+- After a restart nothing is LIVE. Turn the master switch on again, then re-enable LIVE per strategy.
+
+## 2a. Daily routine
 
 | When | You |
 |---|---|

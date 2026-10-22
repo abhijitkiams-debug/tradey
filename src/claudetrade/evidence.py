@@ -63,7 +63,13 @@ def _verify_chain(conn: sqlite3.Connection) -> tuple[bool, list[dict]]:
     return True, events
 
 
-def evaluate(gate: LiveGate, now: datetime, alert_channel_configured: bool) -> GateResult:
+SWING_KEY = "SWING"
+
+
+def evaluate(gate: LiveGate, now: datetime, alert_channel_configured: bool, strategy_key: str | None = None) -> GateResult:
+    """Book-level gate, or — with ``strategy_key`` — the gate for one strategy: the clock starts
+    when that strategy was first switched to PAPER, and only sessions it actually ran in count
+    (for the swing desk, every paper session since it was switched on)."""
     res = GateResult(passed=False)
     if gate.require_alert_channel and not alert_channel_configured:
         res.reasons.append("no alert channel configured (set Telegram or webhook env vars; see RUNBOOK)")
@@ -76,18 +82,32 @@ def evaluate(gate: LiveGate, now: datetime, alert_channel_configured: bool) -> G
         res.reasons.append(f"cannot read paper evidence: {e}")
         return res
     try:
-        ok, events = _verify_chain(conn)
+        try:
+            ok, events = _verify_chain(conn)
+        except sqlite3.Error as e:
+            res.reasons.append(f"paper evidence not readable yet: {e}")
+            return res
         if not ok:
             res.reasons.append("paper audit chain does not verify; evidence rejected")
             return res
-        starts = [e["ts"] for e in events if e["action"] == "STARTUP" and e["payload"].get("mode") == "PAPER"]
+        if strategy_key is None:
+            starts = [e["ts"] for e in events if e["action"] == "STARTUP" and e["payload"].get("mode") == "PAPER"]
+            missing = "no PAPER-mode run found in the evidence database"
+        else:
+            starts = [e["ts"] for e in events if e["action"] == "STRATEGY_MODE"
+                      and e["payload"].get("key") == strategy_key and e["payload"].get("mode") == "PAPER"]
+            missing = "this strategy has never been switched to PAPER"
         if not starts:
-            res.reasons.append("no PAPER-mode run found in the evidence database")
+            res.reasons.append(missing)
             return res
         res.paper_hours = (now - min(starts)).total_seconds() / 3600
         # Session results come only from the hash-chained audit log, never from mutable snapshots.
         reports = {e["payload"]["date"]: e["payload"] for e in events
                    if e["action"] == "EOD_REPORT" and "date" in e["payload"]}
+        if strategy_key is not None:
+            since = min(starts).date().isoformat()
+            reports = {d: r for d, r in reports.items() if d >= since and
+                       (strategy_key == SWING_KEY or strategy_key in (r.get("strategies") or []))}
         failed_jobs = {e["ts"].date().isoformat() for e in events if e["action"] == "JOB_FAILED"}
     finally:
         conn.close()
@@ -103,7 +123,7 @@ def evaluate(gate: LiveGate, now: datetime, alert_channel_configured: bool) -> G
     if res.paper_hours < gate.min_paper_hours:
         res.reasons.append(f"paper trading for {res.paper_hours:.1f} h; {gate.min_paper_hours:.0f} h required")
     if len(recent) < gate.min_clean_sessions or not all(s["clean"] for s in recent):
-        res.reasons.append(f"need the last {gate.min_clean_sessions} paper sessions clean; "
-                           f"have {[(s['date'], 'clean' if s['clean'] else 'NOT clean') for s in recent]}")
+        got = ", ".join(f"{x['date']} {'clean' if x['clean'] else 'NOT clean'}" for x in recent) or "none yet"
+        res.reasons.append(f"need the last {gate.min_clean_sessions} paper sessions clean (have: {got})")
     res.passed = not res.reasons
     return res

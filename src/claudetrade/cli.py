@@ -155,17 +155,17 @@ def cmd_groww_check(args) -> int:
 def cmd_serve(args) -> int:
     import uvicorn
 
-    from .runtime import build_runtime
+    from .desk import build_desk
     from .server import create_app
     from .settings import load_settings
 
     settings = load_settings(args.config)
-    rt = build_runtime(settings)
-    rt.start()
+    desk = build_desk(settings)
+    desk.start(settings.tick_seconds)
     try:
-        uvicorn.run(create_app(rt), host=args.host, port=args.port, log_level="info")
+        uvicorn.run(create_app(desk), host=args.host, port=args.port, log_level="info")
     finally:
-        rt.stop()
+        desk.stop()
     return 0
 
 

@@ -9,19 +9,46 @@ authorisation, and the pilot checklist below should be completed first.**
 
 > Research intelligently. Validate independently. Execute deterministically. Reconcile continuously.
 
-## Run it (paper trading on live Groww data)
+## Run it
 
 ```bash
 pip install -e ".[server,groww,agent]"
-cp config/claudetrade.example.toml config/paper.toml     # pick your universe and limits
+cp config/claudetrade.example.toml config/claudetrade.toml   # universe, limits; live_enabled = true when ready
 export CLAUDETRADE_OPERATOR_TOKEN=$(python -c "import secrets;print(secrets.token_urlsafe(32))")
 export GROWW_API_KEY=... GROWW_API_SECRET=...            # or GROWW_ACCESS_TOKEN / GROWW_TOTP_SECRET
-claudetrade serve --config config/paper.toml             # http://127.0.0.1:8000, sign in with the token
+claudetrade serve --config config/claudetrade.toml       # http://127.0.0.1:8000, sign in with the token
 ```
 
-Or with Docker: copy `.env.example` to `.env.paper`, put your config at `config/paper.toml`,
-then `docker compose up -d paper`. The `live` service has its own config, database and secrets,
-and only starts with `docker compose --profile live up -d live`.
+Or with Docker: copy `.env.example` to `.env`, put your config at `config/claudetrade.toml`, then run
+`docker compose up -d`.
+
+### The dashboard: one switch per strategy
+
+`serve` runs the **desk**, which has two books with completely separate money:
+
+| Book | Money | Broker |
+|---|---|---|
+| **Paper** | Virtual ₹10,000 | Simulated fills against live Groww prices |
+| **Live** (`live_enabled = true`) | Your Groww account | Groww API |
+
+Every frozen strategy version, plus "Swing: Claude proposals", gets a switch: **OFF · PAPER · LIVE**.
+
+- **OFF → PAPER:** any time. A strategy that hasn't passed the eligibility checks runs as a *paper-only trial*.
+- **PAPER → LIVE:** needs everything below. The LIVE button stays disabled and lists what's missing:
+  - the strategy is eligible;
+  - the live master switch is on, with approved live limits;
+  - *this strategy's own* paper record: 72 h since it was switched to PAPER, and its last 3 paper sessions clean;
+  - an alert channel;
+  - typing `ENABLE LIVE TRADING`.
+- **LIVE → PAPER/OFF:** immediate. New live entries stop at once; open live positions keep their stops and square-off.
+- **Master switch off, or a restart:** every LIVE strategy drops back to PAPER automatically.
+
+A switch is a standing release: each morning every switched-on strategy is validated for that day
+before it can trade. Switching on during the session validates it straight away.
+
+The **Paper / Live tabs** show each book's portfolio, positions, orders, swing approvals, intraday
+P&L by strategy, alerts and audit trail, with its own controls: kill switch, pause/resume, square-off,
+reconcile, approve limits. **Kill ALL books** stops both at once.
 
 What happens each trading day (`scheduler.py`, times in IST):
 
@@ -98,6 +125,7 @@ server (FastAPI operator API + static dashboard) ── runtime.build_runtime(se
 | `feeds.py` | FR-01 | Groww quotes, with freshness taken from the exchange's last-trade time. Intraday 1-min candles, and history fetched in 30-day chunks with a CSV cache |
 | `store.py`, `persistence.py` | §10, §12 | SQLite with append-only triggers. Audit, ledger and fills are written *before* they take effect. State is restored on restart with hash checks. The kill switch survives a restart; live authorisation never does |
 | `scheduler.py`, `runtime.py`, `settings.py` | §9, §11 | Daily lifecycle jobs, assembly from a TOML file. The file can't approve anything |
+| `desk.py` | §5, FR-12 | Paper and live books in one service, with the per-strategy OFF/PAPER/LIVE switch, its gates, and the live master switch |
 | `server.py`, `static/index.html` | §4, FR-11 | Token-authenticated operator API (fails closed) and the dashboard |
 
 ## Safety invariants (each covered by tests)

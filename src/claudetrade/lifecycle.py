@@ -84,6 +84,7 @@ class Release:
     effective_session: date
     approved_by: str
     approved_at: datetime
+    paper_only: bool = False  # trial of a not-yet-eligible version: the live book never accepts these
 
 
 @dataclass(frozen=True)
@@ -126,14 +127,16 @@ class StrategyBook:
         self.audit.record("research", "STRATEGY_FROZEN", label=sv.label, status=sv.status.value, failures=fails)
         return sv
 
-    def release(self, version_hash: str, session: date, operator: str) -> Release:
-        """Operator action. Claude has no tool that reaches this."""
+    def release(self, version_hash: str, session: date, operator: str, paper_only: bool = False) -> Release:
+        """Operator action (directly, or standing via a strategy toggle). Claude has no tool that reaches this."""
         sv = self.versions.get(version_hash)
         if sv is None:
             raise KeyError("unknown strategy version")
-        if sv.status is not StrategyStatus.ELIGIBLE:
+        if sv.status is not StrategyStatus.ELIGIBLE and not paper_only:
             raise PermissionError(f"{sv.label} is {sv.status.value}: {list(sv.eligibility_failures)}")
-        r = Release(f"rel-{version_hash[:8]}-{session.isoformat()}", version_hash, session, operator, self.clock())
+        suffix = "-paper" if paper_only else ""
+        r = Release(f"rel-{version_hash[:8]}-{session.isoformat()}{suffix}", version_hash, session, operator,
+                    self.clock(), paper_only)
         self.releases[r.release_id] = r
         self.audit.record(operator, "STRATEGY_RELEASED", label=sv.label, session=session.isoformat())
         return r
@@ -162,7 +165,7 @@ class StrategyBook:
         if release.effective_session != now.date():
             reasons.append(f"release is for {release.effective_session}, today is {now.date()}")
             return done(SessionOutcome.EXPIRED)
-        if sv is None or sv.status is not StrategyStatus.ELIGIBLE:
+        if sv is None or (sv.status is not StrategyStatus.ELIGIBLE and not release.paper_only):
             reasons.append("strategy version missing or not eligible")
             return done(SessionOutcome.REJECTED)
         try:

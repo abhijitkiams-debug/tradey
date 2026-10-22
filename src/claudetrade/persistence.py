@@ -129,8 +129,9 @@ class Persistence:
             eng = a.intraday
             put("engine", "state", {
                 "date": a.clock().date(),
-                "strategy_hash": eng.strategy_version.content_hash if eng.strategy_version else None,
-                "validation": eng.validation, "universe": eng.universe, "invalidated": eng.invalidated,
+                "active": [{"hash": h, "validation": v} for h, (_sv, v) in eng.active.items()],
+                "ran_today": eng.ran_today, "owner": eng.owner,
+                "universe": eng.universe, "invalidated": eng.invalidated,
                 "acted": sorted([list(x) for x in eng._acted_signals]),
                 "square_off": vars(eng.square_off),
             })
@@ -204,15 +205,17 @@ class Persistence:
             app.controls.reasons = list(c["reasons"])
 
         eng = s.latest("engine").get("state")
-        if eng and eng["date"] == app.clock().date() and eng["strategy_hash"] in app.strategies.versions:
-            v = eng["validation"]
-            val = SessionValidation(SessionOutcome(v["outcome"]), tuple(v["reasons"]), v["version_hash"], v["ts"]) if v else None
-            if val is not None:
-                app.intraday.strategy_version = app.strategies.versions[eng["strategy_hash"]]
-                app.intraday.validation = val
-                app.intraday.universe = list(eng["universe"])
+        if eng and eng["date"] == app.clock().date() and "active" in eng:
+            for item in eng["active"]:
+                v = item["validation"]
+                if item["hash"] in app.strategies.versions and v:
+                    val = SessionValidation(SessionOutcome(v["outcome"]), tuple(v["reasons"]), v["version_hash"], v["ts"])
+                    app.intraday.active[item["hash"]] = (app.strategies.versions[item["hash"]], val)
+            app.intraday.ran_today = dict(eng["ran_today"])
+            app.intraday.owner = dict(eng["owner"])
+            app.intraday.universe = list(eng["universe"])
             app.intraday.invalidated = eng["invalidated"]
-            app.intraday._acted_signals = {(sym, idx) for sym, idx in eng["acted"]}
+            app.intraday._acted_signals = {tuple(x) for x in eng["acted"]}
             for k, val_ in eng["square_off"].items():
                 setattr(app.intraday.square_off, k, val_)
 

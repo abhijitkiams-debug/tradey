@@ -113,7 +113,10 @@ class RiskEngine:
             check("operating_mode", False, "research mode never executes orders")
         elif self.operating_mode is OperatingMode.LIVE:
             check("risk_config_approved", cfg.is_approved, "live trading requires an operator-approved risk config")
-            check("live_authorised", self.live_auth.is_valid_for(cfg), "live mode not explicitly authorised for this risk config")
+            if not req.is_exit:
+                # Exits only ever reduce a real position that exists because of an earlier authorised
+                # entry; blocking them after a revoke or restart would leave real risk unmanaged.
+                check("live_authorised", self.live_auth.is_valid_for(cfg), "live mode not explicitly authorised for this risk config")
         else:
             check("operating_mode", True)
 
