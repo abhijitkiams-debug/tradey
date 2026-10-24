@@ -11,6 +11,10 @@ authorisation, and the pilot checklist below should be completed first.**
 
 ## Run it
 
+**To deploy on a server and start paper trading, follow [`deploy/README.md`](deploy/README.md)**:
+a server, a Groww TOTP API key, a Telegram bot, then `./deploy/start.sh`. That script runs
+`claudetrade doctor` and starts only if every check passes. Locally:
+
 ```bash
 pip install -e ".[server,groww,agent]"
 cp config/claudetrade.example.toml config/claudetrade.toml   # universe, limits; live_enabled = true when ready

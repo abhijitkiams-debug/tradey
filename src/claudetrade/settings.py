@@ -48,6 +48,10 @@ class Settings:
     live_gate: LiveGate = field(default_factory=LiveGate)
     agent_daily_review: bool = False
     tick_seconds: int = 15
+    research_on_start: bool = True  # run research when the service starts with no strategies yet
+    # Strategy families to switch to PAPER automatically when a version exists and none of that
+    # family is on yet (operator decision recorded in config; never touches LIVE).
+    auto_paper: tuple[str, ...] = ()
 
 
 def _coerce(cls: type, raw: dict[str, Any], forbidden: tuple[str, ...] = ()) -> Any:
@@ -84,7 +88,7 @@ def load_settings(path: str | Path | None) -> Settings:
         eligibility=_coerce(EligibilityCriteria, raw.get("eligibility", {})),
         live_gate=_coerce(LiveGate, raw.get("live_gate", {})),
     )
-    for k in ("universe",):
+    for k in ("universe", "auto_paper"):
         if k in top:
             top[k] = tuple(s_.upper() for s_ in top[k])
     unknown = set(top) - {f.name for f in fields(Settings)}

@@ -1,0 +1,27 @@
+# Alternative to Docker: run under systemd.
+#   sudo useradd -r -m -d /opt/claudetrade trader
+#   sudo -u trader python3 -m venv /opt/claudetrade/venv
+#   sudo -u trader /opt/claudetrade/venv/bin/pip install -c deploy/requirements.lock "/path/to/tradey[server,groww,agent]"
+#   put config at /opt/claudetrade/claudetrade.toml and secrets in /opt/claudetrade/.env (chmod 600)
+#   sudo cp deploy/claudetrade.service /etc/systemd/system/ && sudo systemctl enable --now claudetrade
+[Unit]
+Description=ClaudeTrade desk (paper + live books)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=trader
+WorkingDirectory=/opt/claudetrade
+EnvironmentFile=/opt/claudetrade/.env
+Environment=TZ=Asia/Kolkata
+ExecStartPre=/opt/claudetrade/venv/bin/claudetrade doctor --config /opt/claudetrade/claudetrade.toml
+ExecStart=/opt/claudetrade/venv/bin/claudetrade serve --config /opt/claudetrade/claudetrade.toml --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/claudetrade
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

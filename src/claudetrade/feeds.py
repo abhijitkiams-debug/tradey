@@ -110,7 +110,7 @@ class GrowwFeed:
         start = datetime.combine(now.date(), time(9, 15), IST)
         df = self.candles(symbol, start, now)
         # drop the bar that is still forming
-        df = df[df.index + pd.Timedelta(minutes=1) <= pd.Timestamp(now)]
+        df = df[df.index <= pd.Timestamp(now) - pd.Timedelta(minutes=1)]
         self._bars[symbol] = (now, df)
         return df
 

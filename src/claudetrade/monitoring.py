@@ -256,7 +256,7 @@ class IntradayEngine:
                 continue
             today = bars[bars.index.date == now.date()]
             # Only completed bars: drop the bar still forming
-            today = today[today.index + pd.Timedelta(minutes=1) <= pd.Timestamp(now)]
+            today = today[today.index <= pd.Timestamp(now) - pd.Timedelta(minutes=1)]
             if len(today) >= 2:
                 todays[sym] = today
         for h, (sv, _v) in list(self.active.items()):

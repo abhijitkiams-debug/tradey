@@ -36,10 +36,11 @@ class Runtime:
             self.app.persistence.store.close()
 
 
-def _groww_client():
-    from .broker.groww import GrowwBroker
+def _groww_client(clock: Callable[[], datetime] = system_clock):
+    from .broker.groww_auth import RefreshingGrowwClient, login_from_env
 
-    return GrowwBroker.from_env(system_clock).client
+    login, flow = login_from_env()
+    return RefreshingGrowwClient(login, clock, flow)
 
 
 def build_runtime(settings: Settings, clock: Callable[[], datetime] = system_clock,
@@ -49,7 +50,7 @@ def build_runtime(settings: Settings, clock: Callable[[], datetime] = system_clo
     broker = None
     client = groww_client
     if settings.data_source == "groww" or settings.mode is OperatingMode.LIVE:
-        client = client or _groww_client()
+        client = client or _groww_client(clock)
     if settings.mode is OperatingMode.LIVE:
         from .broker.groww import GrowwBroker
 

@@ -24,7 +24,6 @@ logged, put in prompts, or stored in the database.
 
 from __future__ import annotations
 
-import os
 import re
 import threading
 import time
@@ -117,22 +116,11 @@ class GrowwBroker:
     # ---- construction from the environment ------------------------------------------------
     @classmethod
     def from_env(cls, clock: Callable[[], datetime], **kw: Any) -> GrowwBroker:
-        """GROWW_ACCESS_TOKEN, or GROWW_API_KEY with GROWW_API_SECRET (approval flow) or
-        GROWW_TOTP_SECRET (TOTP flow, requires ``pyotp``)."""
-        from growwapi import GrowwAPI  # optional dependency: pip install 'claudetrade[groww]'
+        """Credentials from GROWW_* env vars; the session re-logs in by itself (see groww_auth)."""
+        from .groww_auth import RefreshingGrowwClient, login_from_env
 
-        token = os.environ.get("GROWW_ACCESS_TOKEN")
-        if not token:
-            api_key = os.environ.get("GROWW_API_KEY")
-            if not api_key:
-                raise RuntimeError("set GROWW_ACCESS_TOKEN or GROWW_API_KEY (+ GROWW_API_SECRET / GROWW_TOTP_SECRET)")
-            if os.environ.get("GROWW_TOTP_SECRET"):
-                import pyotp
-
-                token = GrowwAPI.get_access_token(api_key=api_key, totp=pyotp.TOTP(os.environ["GROWW_TOTP_SECRET"]).now())
-            else:
-                token = GrowwAPI.get_access_token(api_key=api_key, secret=os.environ["GROWW_API_SECRET"])
-        return cls(GrowwAPI(token), clock, **kw)
+        login, flow = login_from_env()
+        return cls(RefreshingGrowwClient(login, clock, flow), clock, **kw)
 
     # ---- plumbing -------------------------------------------------------------------------
     def _call(self, category: str, fn: str, **kwargs: Any) -> dict:

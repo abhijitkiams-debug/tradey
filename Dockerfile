@@ -3,8 +3,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 TZ=Asia/Kolkata
 RUN useradd --create-home --uid 10001 trader
 WORKDIR /app
 COPY pyproject.toml README.md ./
+COPY deploy/requirements.lock ./deploy/requirements.lock
 COPY src ./src
-RUN pip install --no-cache-dir ".[server,groww,agent]" && mkdir -p /data && chown trader /data
+# Versions pinned to the set the test suite passed on (pandas 2.3 + numpy 2.3 + growwapi 1.5)
+RUN pip install --no-cache-dir -c deploy/requirements.lock ".[server,groww,agent]" && mkdir -p /data && chown trader /data
 # relative paths in the config (db_path, cache_dir) resolve inside the /data volume
 WORKDIR /data
 USER trader

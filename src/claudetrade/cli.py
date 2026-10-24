@@ -152,6 +152,100 @@ def cmd_groww_check(args) -> int:
     return 0
 
 
+def cmd_doctor(args) -> int:
+    """Pre-flight checks before (re)starting the service. Read-only: places no orders."""
+    import os
+    from datetime import datetime, timedelta
+
+    from .app import system_clock
+    from .settings import load_settings
+    from .strategies import REGISTRY
+
+    results: list[tuple[str, str, str]] = []
+
+    def rec(status: str, name: str, detail: str = "") -> None:
+        results.append((status, name, detail))
+        print(f"[{status:4}] {name}{': ' + detail if detail else ''}")
+
+    try:
+        s = load_settings(args.config)
+        rec("PASS", "config", f"{args.config}: universe {list(s.universe)}, live_enabled={s.live_enabled}")
+    except Exception as e:  # noqa: BLE001
+        rec("FAIL", "config", str(e))
+        return 1
+    r = s.risk
+    rec("INFO", "limits", f"risk/trade ₹{r.risk_per_trade}, daily loss ₹{r.max_daily_loss}, per order ₹{r.max_order_value}")
+    if not s.universe:
+        rec("FAIL", "universe", "empty: add NSE symbols to trade")
+    bad = [f for f in s.auto_paper if f not in REGISTRY.strategies]
+    rec("FAIL" if bad else ("PASS" if s.auto_paper else "INFO"), "auto_paper",
+        f"unknown families {bad}" if bad else (", ".join(s.auto_paper) or "none: switch strategies to PAPER on the dashboard"))
+    tok = os.environ.get("CLAUDETRADE_OPERATOR_TOKEN", "")
+    rec("PASS" if len(tok) >= 24 else "FAIL", "operator token", "set" if len(tok) >= 24 else "set CLAUDETRADE_OPERATOR_TOKEN (24+ chars)")
+    chan = bool(os.environ.get("CLAUDETRADE_TELEGRAM_BOT_TOKEN") and os.environ.get("CLAUDETRADE_TELEGRAM_CHAT_ID")) or \
+        bool(os.environ.get("CLAUDETRADE_ALERT_WEBHOOK_URL"))
+    rec("PASS" if chan else "WARN", "alert channel", "configured" if chan else "none: alerts only on the dashboard; required before live")
+    if chan and args.send_test_alert:
+        from .monitoring import Alert
+        from .notify import notifier_from_env
+
+        n = notifier_from_env("ClaudeTrade doctor")
+        n.background = False
+        n(Alert(system_clock(), "HIGH", "Doctor test alert: if this reached your phone, alerts work.", "al-doctor"))
+        rec("PASS" if n.sent else "FAIL", "test alert", "sent" if n.sent else "delivery failed")
+    for d in (Path(s.paper_db_path).parent, Path(s.live_db_path).parent, Path(s.research.cache_dir)):
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            probe = d / ".write-test"
+            probe.write_text("ok")
+            probe.unlink()
+            rec("PASS", "writable", str(d.resolve()))
+        except OSError as e:
+            rec("FAIL", "writable", f"{d}: {e}")
+    now = system_clock()
+    if not s.session.holidays:
+        rec("WARN", "holidays", "no NSE holidays configured: the scheduler will treat them as trading days")
+    rec("INFO", "clock", f"{now:%a %d %b %H:%M} IST, trading day={s.session.is_trading_day(now)}, open now={s.session.is_open(now)}")
+
+    if s.data_source != "groww" and not s.live_enabled:
+        rec("WARN", "groww", "data_source is not groww: paper trading has no live prices")
+    else:
+        try:
+            from .broker.groww import GrowwBroker, RateLimiter
+            from .broker.groww_auth import RefreshingGrowwClient, login_from_env
+            from .feeds import GrowwFeed
+            from .market_data import MarketDataService
+
+            login, flow = login_from_env()
+            client = RefreshingGrowwClient(login, system_clock, flow)
+            b = GrowwBroker(client, system_clock)
+            rec("PASS" if b.heartbeat() else "FAIL", "groww login", f"flow={flow}" + (f" ({b.last_error})" if b.last_error else ""))
+            if flow == "static_token":
+                rec("WARN", "groww refresh", "GROWW_ACCESS_TOKEN cannot refresh itself; use GROWW_API_KEY + GROWW_TOTP_SECRET")
+            elif flow == "api_secret":
+                rec("WARN", "groww refresh", "API-secret logins need your approval on Groww Cloud every day before 08:45 IST")
+            md = MarketDataService(system_clock, s.risk, s.session)
+            feed = GrowwFeed(client, md, system_clock, limiter=RateLimiter())
+            for sym in s.universe:
+                try:
+                    q = feed.quote(sym)
+                    age = (now - q.source_ts).total_seconds() / 60 if q else None
+                    rec("PASS" if q else "FAIL", f"quote {sym}", f"₹{q.ltp}, last trade {age:.0f} min ago" if q else "no price")
+                except Exception as e:  # noqa: BLE001
+                    rec("FAIL", f"quote {sym}", type(e).__name__)
+            if s.universe:
+                sym = s.universe[0]
+                end = now
+                start = end - timedelta(days=7)
+                df = feed.candles(sym, datetime.combine(start.date(), datetime.min.time()), end)
+                rec("PASS" if len(df) else "FAIL", "history", f"{sym}: {len(df)} one-minute candles in the last 7 days")
+        except Exception as e:  # noqa: BLE001
+            rec("FAIL", "groww", f"{type(e).__name__}: {e}")
+    fails = sum(1 for st, *_ in results if st == "FAIL")
+    print(f"\n{'READY' if not fails else 'NOT READY'}: {fails} failure(s), {sum(1 for st, *_ in results if st == 'WARN')} warning(s)")
+    return 1 if fails else 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
 
@@ -181,6 +275,10 @@ def main(argv: list[str] | None = None) -> int:
         p.set_defaults(fn=fn)
     gc = sub.add_parser("groww-check", help="read-only checks against your Groww account")
     gc.set_defaults(fn=cmd_groww_check)
+    dc = sub.add_parser("doctor", help="pre-flight checks (config, token, alerts, Groww login, quotes, history)")
+    dc.add_argument("--config", required=True)
+    dc.add_argument("--send-test-alert", action="store_true")
+    dc.set_defaults(fn=cmd_doctor)
     sp = sub.add_parser("serve", help="run scheduler + operator API/dashboard")
     sp.add_argument("--config", default=None, help="TOML settings file")
     sp.add_argument("--host", default="127.0.0.1")

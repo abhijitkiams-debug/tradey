@@ -7,7 +7,7 @@ name = "claudetrade"
 version = "0.1.0"
 description = "AI-assisted NSE cash-equity trading system: Claude research, deterministic risk, verified execution (paper mode first)."
 requires-python = ">=3.11"
-dependencies = ["numpy>=1.26", "pandas>=2.1"]
+dependencies = ["numpy>=1.26", "pandas>=2.1", "tzdata"]
 
 [project.optional-dependencies]
 agent = ["anthropic>=0.70"]

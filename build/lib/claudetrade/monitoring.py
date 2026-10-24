@@ -1,0 +1,403 @@
+"""Monitoring, alerts and the intraday session engine (§G, §FR-10, §14).
+
+``IntradayEngine.tick`` is called on a schedule during the session. Each tick:
+  1. syncs broker state and runs health checks (data freshness, broker, daily loss);
+  2. manages exits for open intraday positions (stop / target);
+  3. evaluates new entry signals from the *frozen, approved* strategy only;
+  4. from the square-off start time, cancels entries, exits everything and verifies flat.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+from decimal import Decimal
+
+import pandas as pd
+
+from .audit import AuditLog
+from .config import RiskConfig, SessionConfig
+from .execution import ExecutionService
+from .lifecycle import SessionOutcome, SessionValidation, StrategyVersion
+from .market_data import MarketDataService
+from .models import OrderRequest, OrderType, Product, Side, TradeMode
+from .risk import TradingControls, size_by_risk
+
+
+@dataclass
+class Alert:
+    ts: datetime
+    severity: str  # INFO | HIGH | CRITICAL
+    message: str
+    alert_id: str = ""
+    acked_by: str | None = None
+    acked_at: datetime | None = None
+    last_sent: datetime | None = None
+    sends: int = 0
+
+
+@dataclass
+class Monitor:
+    clock: Callable[[], datetime]
+    audit: AuditLog
+    controls: TradingControls
+    alerts: list[Alert] = field(default_factory=list)
+    notifier: Callable[[Alert], None] | None = None
+
+    critical_repeat_s: int = 120
+
+    def alert(self, severity: str, message: str) -> Alert:
+        a = Alert(self.clock(), severity, message, alert_id=f"al-{len(self.alerts) + 1:05d}")
+        self.alerts.append(a)
+        self.audit.record("monitor", "ALERT", alert_id=a.alert_id, severity=severity, message=message)
+        self._send(a)
+        return a
+
+    def _send(self, a: Alert) -> None:
+        a.last_sent, a.sends = self.clock(), a.sends + 1
+        if self.notifier:
+            try:
+                self.notifier(a)
+            except Exception as e:  # noqa: BLE001 - a failing channel must never stop trading logic
+                self.audit.record("monitor", "NOTIFY_FAILED", alert_id=a.alert_id, error=type(e).__name__)
+
+    def unacked_critical(self) -> list[Alert]:
+        return [a for a in self.alerts if a.severity == "CRITICAL" and a.acked_by is None]
+
+    def escalate(self) -> int:
+        """Re-send unacknowledged CRITICAL alerts every ``critical_repeat_s`` until a human acks."""
+        now, n = self.clock(), 0
+        for a in self.unacked_critical():
+            if a.last_sent is None or (now - a.last_sent).total_seconds() >= self.critical_repeat_s:
+                self._send(a)
+                n += 1
+        return n
+
+    def ack(self, alert_id: str, operator: str) -> Alert:
+        a = next((x for x in self.alerts if x.alert_id == alert_id), None)
+        if a is None:
+            raise KeyError(f"unknown alert {alert_id}")
+        if a.acked_by is None:
+            a.acked_by, a.acked_at = operator, self.clock()
+            self.audit.record(operator, "ALERT_ACKNOWLEDGED", alert_id=alert_id, after_sends=a.sends)
+        return a
+
+    def activate_kill_switch(self, actor: str, reason: str) -> None:
+        self.controls.kill_switch = True
+        self.controls.reasons.append(reason)
+        self.audit.record(actor, "KILL_SWITCH_ON", reason=reason)
+        # HIGH, not CRITICAL: the event that tripped it carries its own CRITICAL alert, so the
+        # operator gets one repeating alert to acknowledge, not two.
+        self.alert("HIGH", f"kill switch activated by {actor}: {reason}")
+
+    def pause_entries(self, actor: str, reason: str, mode: TradeMode | None = None) -> None:
+        if mode is None:
+            self.controls.entries_paused = True
+        else:
+            self.controls.paused_modes.add(mode)
+        self.controls.reasons.append(reason)
+        self.audit.record(actor, "ENTRIES_PAUSED", reason=reason, mode=mode.value if mode else "ALL")
+
+    def resume_entries(self, operator: str, reason: str) -> None:
+        """Operator only. Kill switch requires a separate, explicit reset."""
+        self.controls.entries_paused = False
+        self.controls.paused_modes.clear()
+        self.audit.record(operator, "ENTRIES_RESUMED", reason=reason)
+
+    def reset_kill_switch(self, operator: str, reason: str) -> None:
+        self.controls.kill_switch = False
+        self.audit.record(operator, "KILL_SWITCH_OFF", reason=reason)
+
+
+def square_off_failure_message(broker_open: str, local_open: list, now: datetime) -> str:
+    local = ", ".join(f"{p.symbol} {p.quantity:+d}" for p in local_open) or "none"
+    return (
+        f"SQUARE-OFF FAILED at {now:%H:%M} IST. Open intraday (MIS) positions — broker: {broker_open}; "
+        f"local book: {local}. ClaudeTrade keeps retrying automatically and the kill switch is ON. "
+        "ACT NOW (docs/RUNBOOK.md §3): 1) In the Groww app open your intraday positions and Exit each one at market. "
+        "2) Cancel any pending orders for those symbols. 3) Confirm Positions shows no MIS quantity. "
+        "4) Acknowledge this alert in the dashboard. Do not reset the kill switch until Reconcile shows no mismatches."
+    )
+
+
+@dataclass
+class SquareOffStatus:
+    started: bool = False
+    verified_flat: bool = False
+    attempts: int = 0
+    last_error: str | None = None
+    escalated: bool = False
+    failed: bool = False  # sticky for the day: the deadline was missed, even if flat later
+
+
+class IntradayEngine:
+    def __init__(
+        self,
+        execution: ExecutionService,
+        market_data: MarketDataService,
+        monitor: Monitor,
+        risk: RiskConfig,
+        session: SessionConfig,
+        bars_source: Callable[[str], pd.DataFrame],
+        clock: Callable[[], datetime],
+    ):
+        self.ex = execution
+        self.md = market_data
+        self.monitor = monitor
+        self.risk = risk
+        self.session = session
+        self.bars = bars_source
+        self.clock = clock
+        # Several frozen strategies can run in one book; each was validated for today on its own.
+        self.active: dict[str, tuple[StrategyVersion, SessionValidation]] = {}
+        self.ran_today: dict[str, str] = {}  # hash -> label, anything active at any point today
+        self.owner: dict[str, str] = {}  # symbol -> label of the strategy that opened the position
+        self.universe: list[str] = []
+        self._acted_signals: set[tuple[str, str, int]] = set()
+        self.square_off = SquareOffStatus()
+        self.invalidated: str | None = None
+
+    # Back-compat views: "the" strategy is the first active one.
+    @property
+    def strategy_version(self) -> StrategyVersion | None:
+        return next(iter(self.active.values()))[0] if self.active else None
+
+    @property
+    def validation(self) -> SessionValidation | None:
+        return next(iter(self.active.values()))[1] if self.active else None
+
+    def reset_for_day(self) -> None:
+        """Start-of-day reset: yesterday's activations, signals and square-off state never carry over."""
+        self.active = {}
+        self.ran_today = {}
+        self.universe = []
+        self._acted_signals = set()
+        self.square_off = SquareOffStatus()
+        self.invalidated = None
+
+    def activate(self, sv: StrategyVersion, validation: SessionValidation, universe: list[str]) -> bool:
+        if validation.outcome is not SessionOutcome.APPROVED or validation.version_hash != sv.content_hash:
+            self.monitor.alert("INFO", f"{sv.label} not activated: {validation.outcome.value} {list(validation.reasons)}")
+            return False
+        self.active[sv.content_hash] = (sv, validation)
+        self.ran_today[sv.content_hash] = sv.label
+        self.universe = list(universe)
+        self.ex.audit.record("engine", "INTRADAY_ACTIVATED", strategy=sv.label, universe=list(universe))
+        return True
+
+    def deactivate(self, version_hash: str, reason: str) -> bool:
+        """No new entries from this strategy; its open positions keep their exits and square-off."""
+        item = self.active.pop(version_hash, None)
+        if item is not None:
+            self.ex.audit.record("engine", "INTRADAY_DEACTIVATED", strategy=item[0].label, reason=reason)
+        return item is not None
+
+    def invalidate(self, reason: str) -> None:
+        """Stop new entries for the rest of the session; existing positions follow the exit policy."""
+        self.invalidated = reason
+        self.monitor.pause_entries("engine", f"strategy invalidated: {reason}", TradeMode.INTRADAY)
+
+    # ------------------------------------------------------------------------------------
+    def tick(self) -> None:
+        now = self.clock()
+        self.ex.sync()
+        self._health_checks(now)
+        if now.time() >= self.session.square_off_start:
+            self.run_square_off()
+            return
+        self._manage_exits()
+        if self.active and not self.invalidated:
+            self._entries(now)
+
+    def _health_checks(self, now: datetime) -> None:
+        if not self.ex.broker.is_healthy():
+            self.monitor.pause_entries("monitor", "broker disconnected")
+            self.monitor.alert("HIGH", "broker disconnected: new entries blocked")
+        if not self.md.is_healthy():
+            self.monitor.pause_entries("monitor", "market data unhealthy")
+            self.monitor.alert("HIGH", "market data unhealthy: new entries blocked")
+        prices = self._prices()
+        day_pnl = self.ex.portfolio.realised_pnl_on(now.date()) + self.ex.portfolio.unrealised_pnl(prices)
+        if day_pnl <= -self.risk.max_daily_loss and not self.monitor.controls.entries_paused:
+            self.monitor.pause_entries("monitor", f"daily loss limit reached (₹{day_pnl:.2f})")
+            self.monitor.alert("HIGH", f"daily loss limit reached: ₹{day_pnl:.2f}; no new risk today")
+
+    def _prices(self) -> dict[str, Decimal]:
+        out = {}
+        for p in self.ex.portfolio.open_positions():
+            v = self.md.validate_quote(p.symbol, p.mode)
+            if v.quote is not None:
+                out[p.symbol] = v.quote.ltp
+        return out
+
+    def _manage_exits(self) -> None:
+        for pos in self.ex.portfolio.open_positions(TradeMode.INTRADAY):
+            if any(o.request.is_exit and o.request.symbol == pos.symbol for o in self.ex.open_orders(TradeMode.INTRADAY)):
+                continue
+            v = self.md.validate_quote(pos.symbol, TradeMode.INTRADAY)
+            if v.quote is None:
+                continue
+            ltp = v.quote.ltp
+            reason = None
+            if pos.stop_loss is not None and ltp <= pos.stop_loss:
+                reason = "stop"
+            elif pos.target is not None and ltp >= pos.target:
+                reason = "target"
+            if reason:
+                self._exit(pos.symbol, abs(pos.quantity), reason)
+
+    def _entries(self, now: datetime) -> None:
+        todays: dict[str, pd.DataFrame] = {}
+        for sym in self.universe:
+            bars = self.bars(sym)
+            if bars is None or bars.empty:
+                continue
+            today = bars[bars.index.date == now.date()]
+            # Only completed bars: drop the bar still forming
+            today = today[today.index <= pd.Timestamp(now) - pd.Timedelta(minutes=1)]
+            if len(today) >= 2:
+                todays[sym] = today
+        for h, (sv, _v) in list(self.active.items()):
+            strat = sv.instantiate()
+            for sym, today in todays.items():
+                last = len(today) - 1
+                for sig in strat.signals(today):
+                    key = (h[:12], sym, sig.bar_index)
+                    if sig.bar_index != last or key in self._acted_signals:
+                        continue
+                    self._acted_signals.add(key)
+                    if sym in self.owner and not self.ex.portfolio.position(sym, TradeMode.INTRADAY).is_flat:
+                        self.ex.audit.record("engine", "SIGNAL_SKIPPED", symbol=sym, strategy=sv.label,
+                                             reason=f"position already held by {self.owner[sym]}")
+                        continue
+                    self._enter(sym, sig, sv)
+
+    def _enter(self, sym: str, sig, sv: StrategyVersion) -> None:
+        v = self.md.validate_quote(sym, TradeMode.INTRADAY)
+        if not v.valid:
+            return
+        entry = v.quote.ask
+        stop = Decimal(str(round(sig.stop, 2)))
+        cash_cap = min(self.ex.ledger.available() * Decimal("0.98"), self.risk.max_order_value)
+        qty = size_by_risk(self.risk.risk_per_trade, entry, stop, cash_cap)
+        if qty <= 0:
+            self.ex.audit.record("engine", "SIGNAL_SKIPPED", symbol=sym, reason="computed quantity is zero")
+            return
+        req = OrderRequest(
+            client_request_id=f"id-{uuid.uuid4().hex[:12]}",
+            symbol=sym, side=Side.BUY, quantity=qty, order_type=OrderType.MARKET, product=Product.MIS,
+            mode=TradeMode.INTRADAY, stop_loss=stop, strategy_version=sv.label, origin="strategy",
+        )
+        res = self.ex.execute(req)
+        if res.order is not None:
+            self.owner[sym] = sv.label
+            if sig.target is not None:
+                self.ex.portfolio.position(sym, TradeMode.INTRADAY).target = Decimal(str(round(sig.target, 2)))
+
+    def _exit(self, sym: str, qty: int, reason: str):
+        req = OrderRequest(
+            client_request_id=f"ix-{uuid.uuid4().hex[:12]}",
+            symbol=sym, side=Side.SELL, quantity=qty, order_type=OrderType.MARKET, product=Product.MIS,
+            mode=TradeMode.INTRADAY, is_exit=True, origin="system", strategy_version=self.owner.get(sym),
+        )
+        res = self.ex.execute(req)
+        self.ex.audit.record("engine", "EXIT_REQUESTED", symbol=sym, qty=qty, reason=reason, result=res.message)
+        return res
+
+    # ------------------------------------------------------------------------------------
+    def run_square_off(self) -> SquareOffStatus:
+        """Cancel intraday entries, exit all intraday positions, verify flat at the broker.
+        Never reports flat unless the broker's own position view agrees."""
+        st = self.square_off
+        if not st.started:
+            # No pause needed: the Risk Engine already refuses intraday entries after the entry cutoff.
+            st.started = True
+            self.ex.audit.record("engine", "SQUARE_OFF_START")
+        st.attempts += 1
+        for o in self.ex.open_orders(TradeMode.INTRADAY):
+            if not o.request.is_exit:
+                self.ex.cancel(o.client_request_id, actor="square_off")
+        self.ex.sync()
+        for pos in self.ex.portfolio.open_positions(TradeMode.INTRADAY):
+            pending_exit = sum(o.remaining_quantity for o in self.ex.open_orders(TradeMode.INTRADAY)
+                               if o.request.is_exit and o.request.symbol == pos.symbol)
+            remaining = abs(pos.quantity) - pending_exit
+            if remaining > 0:
+                res = self._exit(pos.symbol, remaining, "square_off")
+                if res.order is None:
+                    st.last_error = res.message
+        self.ex.sync()
+        return self.verify_flat()
+
+    def verify_flat(self) -> SquareOffStatus:
+        st = self.square_off
+        try:
+            broker_mis = {k: v for k, v in self.ex.broker.get_positions().items() if k[1] is Product.MIS and v != 0}
+        except Exception as e:  # broker unreachable: we cannot claim flat
+            broker_mis = {"unknown": str(e)}
+        local_open = self.ex.portfolio.open_positions(TradeMode.INTRADAY)
+        st.verified_flat = not broker_mis and not local_open
+        now = self.clock()
+        if st.verified_flat:
+            self.ex.audit.record("engine", "SQUARE_OFF_VERIFIED_FLAT", attempts=st.attempts)
+            if st.escalated:
+                self.monitor.alert("INFO", f"Intraday book now verified FLAT after {st.attempts} attempts. "
+                                           "Kill switch stays on until you reconcile and reset it.")
+                st.escalated = False
+        elif now.time() >= self.session.square_off_deadline:
+            open_desc = ", ".join(f"{k[0]} {v:+d}" for k, v in broker_mis.items() if isinstance(k, tuple)) or str(broker_mis)
+            st.last_error = f"not flat after deadline: broker={open_desc} local={[p.symbol for p in local_open]}"
+            if not st.escalated:  # once; repeats come from Monitor.escalate until acknowledged
+                st.escalated = st.failed = True
+                self.monitor.activate_kill_switch("engine", "square-off failure")
+                self.monitor.alert("CRITICAL", square_off_failure_message(open_desc, local_open, now))
+        return st
+
+    def strategy_pnl(self, day=None) -> dict[str, Decimal]:
+        """Approximate per-strategy P&L for a day: sells - buys - charges + open qty x LTP."""
+        day = day or self.clock().date()
+        out: dict[str, Decimal] = {}
+        held: dict[tuple[str, str], int] = {}
+        for o in self.ex.orders.values():
+            label = o.request.strategy_version
+            if not label or o.request.mode is not TradeMode.INTRADAY or not o.created_at or o.created_at.date() != day:
+                continue
+            gross = o.average_price * o.filled_quantity
+            out[label] = out.get(label, Decimal("0")) + (gross if o.request.side is Side.SELL else -gross)
+            if o.filled_quantity:
+                charges = self.ex.risk.costs.charges(o.request.side, o.request.product, o.filled_quantity, o.average_price)
+                out[label] -= charges
+            k = (label, o.request.symbol)
+            held[k] = held.get(k, 0) + (o.filled_quantity if o.request.side is Side.BUY else -o.filled_quantity)
+        for (label, sym), q in held.items():
+            if q:
+                v = self.md.validate_quote(sym, TradeMode.INTRADAY)
+                if v.quote is not None:
+                    out[label] += v.quote.ltp * q
+        return {k: v.quantize(Decimal("0.01")) for k, v in out.items()}
+
+    def end_of_day_report(self) -> dict:
+        now = self.clock()
+        orders = [o for o in self.ex.orders.values() if o.request.mode is TradeMode.INTRADAY
+                  and o.created_at is not None and o.created_at.date() == now.date()]
+        return {
+            "date": now.date().isoformat(),
+            "strategy": ", ".join(self.ran_today.values()) or None,
+            "strategies": sorted(self.ran_today),
+            "validation": self.validation.outcome.value if self.validation else None,
+            "strategy_pnl": {k: str(v) for k, v in self.strategy_pnl().items()},
+            "orders": len(orders),
+            "rejected": sum(o.status.value == "REJECTED" for o in orders),
+            "realised_pnl": str(self.ex.portfolio.realised_pnl_on(now.date())),
+            "charges_paid_total": str(self.ex.ledger.charges_paid()),
+            "mode": self.ex.risk.operating_mode.value,
+            "verified_flat": self.square_off.verified_flat,
+            "square_off_failed": self.square_off.failed,
+            "reconciliation_ok": self.ex.reconciliation_ok,
+            "alerts": [a.message for a in self.monitor.alerts if a.ts.date() == now.date()],
+        }
+
+
+__all__ = ["Alert", "Monitor", "IntradayEngine", "SquareOffStatus"]

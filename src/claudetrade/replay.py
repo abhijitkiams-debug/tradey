@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 import pandas as pd
@@ -32,8 +32,7 @@ def replay_session(app: ClaudeTrade, clock: SimClock, data: dict[str, pd.DataFra
     todays = {s: df[df.index.date == day] for s, df in data.items()}
     minutes = sorted({ts for df in todays.values() for ts in df.index})
     for ts in minutes:
-        bar_close = ts + pd.Timedelta(minutes=1)
-        clock.set(bar_close.to_pydatetime())
+        clock.set(ts.to_pydatetime() + timedelta(minutes=1))
         for s, df in todays.items():
             if ts in df.index:
                 app.market_data.ingest_quote(quote_from_bar(s, df.loc[ts], prev_close[s], clock.now))

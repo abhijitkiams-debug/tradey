@@ -12,6 +12,10 @@ live_db_path = "var/live.db"
 live_enabled = false      # true: build the live book (needs Groww credentials). Strategies still start OFF.
 tick_seconds = 15
 agent_daily_review = false  # true: Claude reviews after close and may file swing proposals
+research_on_start = true    # first start: fetch history and freeze strategy versions right away
+# Families switched to PAPER automatically as soon as a version exists (paper only; never LIVE).
+# A running version is never replaced by newer research, so its 72-hour clock keeps going.
+auto_paper = ["ORB", "VWAP_PULLBACK", "MEAN_REVERSION"]
 
 # Liquid NSE large caps well under the ₹1,000 order cap, so a position can be more than 1-2 shares.
 universe = ["ITC", "COALINDIA", "NTPC", "POWERGRID", "ONGC", "TATASTEEL"]
@@ -44,7 +48,7 @@ swing_material_change_pct = 1.5
 no_new_entries_after = "14:45"
 square_off_start = "15:00"
 square_off_deadline = "15:10"
-holidays = []              # NSE trading holidays, ISO dates, e.g. "2026-10-20"
+holidays = []              # NSE trading holidays, ISO dates from the NSE holiday calendar, e.g. "2026-11-24"
 
 [research]
 history_days = 120

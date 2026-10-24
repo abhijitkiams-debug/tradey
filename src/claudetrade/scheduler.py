@@ -21,7 +21,7 @@ import threading
 import traceback
 import uuid
 from collections.abc import Callable
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Any
 
 from .app import ClaudeTrade
@@ -42,6 +42,9 @@ class Scheduler:
         self.research_loader = research_loader
         self.agent_runner = agent_runner
         self.strategy_source = strategy_source  # desk toggles -> [(StrategyVersion, operator, paper_only)]
+        self.after_research: Callable[[], None] | None = None
+        self.outcomes: dict = {}  # date -> {version hash: outcome} from today's validations
+        self._last_validate: datetime | None = None
         self.store = app.persistence.store if app.persistence else None
         self._mem_done: set[str] = set()
         self._stop = threading.Event()
@@ -101,9 +104,10 @@ class Scheduler:
             ran.append("preopen")
 
         if ses.market_open <= t < ses.market_close:
-            if t >= time(9, 20) and not self.done("validate", now):
+            if t >= time(9, 20) and (not self.done("validate", now) or self._validation_pending(now)):
+                self._last_validate = now
                 outcome = self._guard("validate", self.validate)
-                if outcome != SessionOutcome.DEFERRED.value:
+                if outcome != SessionOutcome.DEFERRED.value and not self.done("validate", now):
                     self._mark("validate", now, outcome)
                 ran.append("validate")
             self._guard("tick", self.tick)
@@ -131,6 +135,17 @@ class Scheduler:
         self.app.execution.reconcile_positions()
         self.app.audit.record("scheduler", "PREOPEN", broker_healthy=self.app.broker.is_healthy())
 
+    def _validation_pending(self, now: datetime) -> bool:
+        """A switched-on strategy without a final outcome today (e.g. switched on mid-session while
+        data was still warming up) is re-validated every 5 minutes until the entry cutoff."""
+        if self.strategy_source is None or now.time() >= self.app.session.no_new_entries_after:
+            return False
+        if self._last_validate and (now - self._last_validate).total_seconds() < 300:
+            return False
+        final = {h for h, o in self.outcomes.get(now.date(), {}).items() if o != SessionOutcome.DEFERRED.value}
+        return any(sv.content_hash not in final and sv.content_hash not in self.app.intraday.active
+                   for sv, _op, _paper in self.strategy_source())
+
     def validate(self) -> str:
         """Validate every strategy released for today in this book; activate those APPROVED.
         With a ``strategy_source`` (the desk's toggles) the toggles act as standing releases."""
@@ -157,11 +172,16 @@ class Scheduler:
             if rel.paper_only and app.mode is OperatingMode.LIVE:
                 outcomes[h] = SessionOutcome.REJECTED.value  # trials never trade real money
                 continue
+            # Morning gaps get until 10:30; a strategy switched on later gets 30 min of grace
+            # from its release, never past the entry cutoff.
+            later = (datetime.combine(today, rel.approved_at.time()) + timedelta(minutes=30)).time()
+            deadline = min(max(time(10, 30), later), app.session.no_new_entries_after)
             v = app.strategies.validate_for_session(rel, app.market_data, list(self.settings.universe),
-                                                    app.risk_config, app.session)
+                                                    app.risk_config, app.session, defer_deadline=deadline)
             if v.outcome is SessionOutcome.APPROVED:
                 app.intraday.activate(app.strategies.versions[h], v, list(self.settings.universe))
             outcomes[h] = v.outcome.value
+        self.outcomes.setdefault(today, {}).update(outcomes)
         if SessionOutcome.DEFERRED.value in outcomes.values():
             return SessionOutcome.DEFERRED.value
         return ",".join(sorted(set(outcomes.values())))
@@ -226,27 +246,39 @@ class Scheduler:
             self.store.checkpoint_wal()  # make the day's evidence readable from a read-only mount
         return {"verified_flat": report["verified_flat"], "mismatches": len(mismatches)}
 
-    def research(self) -> dict:
+    def compute_research(self) -> tuple[dict, list]:
+        """Load history and run walk-forward for every family. Pure computation: safe to run
+        without the app lock (it can take a minute)."""
         if self.research_loader is None:
-            return {"skipped": "no research data source"}
+            return {"skipped": "no research data source"}, []
         data = self.research_loader()
         if not data:
-            return {"skipped": "empty dataset"}
+            return {"skipped": "empty dataset"}, []
         app, rs = self.app, self.settings.research
         cfg = BacktestConfig(capital=float(app.risk_config.starting_capital), risk_per_trade=float(app.risk_config.risk_per_trade),
                              max_position_value=float(app.risk_config.max_position_value),
                              max_concurrent=app.risk_config.max_concurrent_positions,
                              square_off=app.session.square_off_deadline.strftime("%H:%M"))
-        out = {}
+        out, results = {}, []
         for cls in REGISTRY.strategies.values():
             try:
-                wf = walk_forward(cls, data, cfg, app.costs, train_days=rs.train_days, test_days=rs.test_days)
+                results.append(walk_forward(cls, data, cfg, app.costs, train_days=rs.train_days, test_days=rs.test_days))
             except ValueError as e:
                 out[cls.family] = f"skipped: {e}"
-                continue
+        return out, results
+
+    def freeze_research(self, out: dict, results: list) -> dict:
+        app = self.app
+        for wf in results:
             sv = app.strategies.freeze(wf, self.settings.eligibility, app.risk_config)
-            out[cls.family] = sv.status.value
+            out[wf.family] = sv.status.value
+        if self.after_research is not None:
+            self.after_research()
         return out
+
+    def research(self) -> dict:
+        out, results = self.compute_research()
+        return self.freeze_research(out, results)
 
     def review(self) -> dict:
         run = self.agent_runner(

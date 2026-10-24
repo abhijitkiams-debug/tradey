@@ -209,6 +209,7 @@ class Desk:
         if not (ses.is_trading_day(now) and time(9, 20) <= now.time() < ses.no_new_entries_after):
             return
         with rt.app.lock:
+            rt.scheduler._last_validate = now
             rt.scheduler.validate()
 
     def _audit(self, actor: str, action: str, **payload: Any) -> None:
@@ -232,11 +233,47 @@ class Desk:
             if t.mode is StrategyMode.LIVE:
                 self._apply(key, t.label, StrategyMode.PAPER, operator, f"live master switch off: {reason}")
 
+    # ---- automation from config -------------------------------------------------------------
+    def auto_paper_check(self) -> list[str]:
+        """Switch configured families to PAPER when they have a version and none is on yet.
+        Never replaces a version already running (that would restart its 72 h clock)."""
+        families = getattr(self, "settings", None) and self.settings.auto_paper or ()
+        switched = []
+        vs = self.versions()
+        for fam in families:
+            mine = sorted((v for v in vs.values() if v.family == fam), key=lambda v: v.frozen_at)
+            if not mine or any(self.mode(v.content_hash) is not StrategyMode.OFF for v in mine):
+                continue
+            newest = mine[-1]
+            self.set_mode(newest.content_hash, StrategyMode.PAPER, "config:auto_paper",
+                          reason=f"auto_paper includes {fam}")
+            switched.append(newest.label)
+        return switched
+
+    def initial_research(self) -> dict:
+        """Startup research when no strategies exist yet: compute outside the lock, freeze inside."""
+        sched = self.paper.scheduler
+        out, results = sched.compute_research()
+        with self.paper.app.lock:
+            sched.after_research = None
+            try:
+                out = sched.freeze_research(out, results)
+            finally:
+                sched.after_research = self.auto_paper_check
+        out["auto_paper"] = self.auto_paper_check()
+        self.paper.app.audit.record("desk", "INITIAL_RESEARCH", result=out)
+        return out
+
     # ---- views -----------------------------------------------------------------------------
     def strategy_rows(self) -> list[dict[str, Any]]:
         vs = self.versions()
+        # Research freezes a new version every day; show the ones switched on plus the newest per family.
+        newest: dict[str, str] = {}
+        for h, v in sorted(vs.items(), key=lambda kv: kv[1].frozen_at):
+            newest[v.family] = h
+        shown = [h for h in vs if self.mode(h) is not StrategyMode.OFF or newest.get(vs[h].family) == h]
         rows = []
-        for key in [SWING_KEY, *vs]:
+        for key in [SWING_KEY, *shown]:
             sv = vs.get(key)
             t = self.toggles.get(key)
             g = self.gate(key) if self.mode(key) is not StrategyMode.OFF else None
@@ -288,6 +325,18 @@ class Desk:
             self._stop.wait(tick_seconds)
 
     def start(self, tick_seconds: int) -> threading.Thread:
+        settings = getattr(self, "settings", None)
+        if settings is not None:
+            self.paper.scheduler.after_research = self.auto_paper_check
+            if settings.research_on_start and not self.versions():
+                def bootstrap():
+                    try:
+                        self.initial_research()
+                    except Exception as e:  # noqa: BLE001 - surfaced on the dashboard, service keeps running
+                        self.paper.app.monitor.alert("HIGH", f"startup research failed: {type(e).__name__}: {e}")
+                threading.Thread(target=bootstrap, name="claudetrade-research", daemon=True).start()
+            else:
+                self.auto_paper_check()
         th = threading.Thread(target=self.loop, args=(tick_seconds,), name="claudetrade-desk", daemon=True)
         th.start()
         return th
@@ -335,6 +384,7 @@ def build_desk(settings: Settings, clock: Callable[[], datetime] | None = None, 
             paper.feed.add_target(live.app.market_data)
             live.scheduler.feed = paper.feed
     desk = Desk(paper, live, clock)
+    desk.settings = settings
     # Claude's after-close review files proposals into whichever book the swing switch points at.
     if paper.scheduler.agent_runner is not None or settings.agent_daily_review:
         def review(task: str):
