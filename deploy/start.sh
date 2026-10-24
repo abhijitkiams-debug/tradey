@@ -16,10 +16,11 @@ sleep 5
 docker compose ps
 cat <<MSG
 
-ClaudeTrade is running (paper trading). Open the dashboard from your laptop through an SSH tunnel:
+ClaudeTrade is running (paper trading).
 
+Dashboard: http://127.0.0.1:8000  (sign in with CLAUDETRADE_OPERATOR_TOKEN from .env)
+On a remote server, reach it through an SSH tunnel from your laptop:
     ssh -N -L 8000:127.0.0.1:8000 <user>@<this-server>
-    then browse to http://127.0.0.1:8000 and sign in with CLAUDETRADE_OPERATOR_TOKEN from .env
 
 Logs:    docker compose logs -f desk
 Stop:    docker compose down          (state is kept in the desk-data volume)

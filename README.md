@@ -11,7 +11,9 @@ authorisation, and the pilot checklist below should be completed first.**
 
 ## Run it
 
-**To deploy on a server and start paper trading, follow [`deploy/README.md`](deploy/README.md)**:
+**On your own computer:** install Docker Desktop, clone, then run `./deploy/setup-local.sh`
+(Windows: `deploy\setup-local.ps1`). It asks for your Groww TOTP key and starts paper trading.
+**On a server:** follow [`deploy/README.md`](deploy/README.md):
 a server, a Groww TOTP API key, a Telegram bot, then `./deploy/start.sh`. That script runs
 `claudetrade doctor` and starts only if every check passes. Locally:
 

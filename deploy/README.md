@@ -4,6 +4,30 @@ About 30 minutes, once. You need: a small always-on Linux server, a Groww Trade 
 (strongly recommended) a Telegram bot for alerts. Paper trading places **no real orders**; it
 only reads prices from Groww.
 
+## Quickest: run it on your own computer
+
+Fine for paper trading, as long as the computer stays awake and online on trading days
+09:00–16:30 IST.
+
+1. Install **Docker Desktop** (https://docs.docker.com/get-docker/) and start it.
+2. Make sure you have an active **Groww Trading API subscription** (Groww requires one even
+   for reading prices).
+3. Get the code and run the setup script:
+
+   ```bash
+   git clone https://github.com/abhijitkiams-debug/tradey && cd tradey   # private repo: sign in to GitHub when asked
+   ./deploy/setup-local.sh                                               # macOS / Linux
+   # Windows (PowerShell): powershell -ExecutionPolicy Bypass -File deploy\setup-local.ps1
+   ```
+
+The script tells you how to create the key at https://groww.in/trade-api/api-keys
+(dropdown next to *Generate API Key* → *Generate TOTP token*). It asks for the TOTP token and
+TOTP secret (the secret is typed hidden) and writes them to `.env` (permissions 600). It also
+generates your operator token, creates the config, runs `claudetrade doctor`, and starts paper
+trading. At the end it prints the dashboard address (http://127.0.0.1:8000) and your sign-in token.
+
+To use an always-on server instead, follow the steps below.
+
 ## 1. A server
 
 Any Ubuntu 22.04+ VM with 1 vCPU / 1 GB RAM is enough. Pick an India region (for example,
