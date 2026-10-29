@@ -230,6 +230,18 @@ def cmd_doctor(args) -> int:
             client = RefreshingGrowwClient(login, system_clock, flow)
             b = GrowwBroker(client, system_clock)
             rec("PASS" if b.heartbeat() else "FAIL", "groww login", f"flow={flow}" + (f" ({b.last_error})" if b.last_error else ""))
+            try:  # Groww's own view of what this API account may access
+                prof = client.get_user_profile(timeout=10) or {}
+                segs = prof.get("active_segments") or []
+                if "CASH" in segs and prof.get("nse_enabled"):
+                    rec("PASS", "groww segments", f"active {segs}, NSE enabled")
+                else:
+                    rec("FAIL", "groww segments",
+                        f"Groww reports active_segments={segs}, nse_enabled={prof.get('nse_enabled')}: this API account has no "
+                        "NSE cash access, so quotes/history are refused (403). Check the Trading API subscription is active "
+                        "on Groww Cloud and the stocks account/NSE segment is activated; otherwise ask Groww support")
+            except Exception as e:  # noqa: BLE001
+                rec("WARN", "groww segments", f"profile unavailable: {_groww_error(e)}")
             if flow == "static_token":
                 rec("WARN", "groww refresh", "GROWW_ACCESS_TOKEN cannot refresh itself; use GROWW_API_KEY + GROWW_TOTP_SECRET")
             elif flow == "api_secret":
