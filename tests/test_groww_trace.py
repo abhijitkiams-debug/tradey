@@ -74,3 +74,20 @@ def test_service_log_is_throttled(caplog):
         for _ in range(5):
             groww_trace.log_error("get_quote(ITC)", E())
     assert len(caplog.records) == 1 and "GA005" in caplog.text and "Access forbidden" in caplog.text
+
+
+def test_token_failure_shows_reason_but_success_never_parsed(monkeypatch):
+    import requests
+
+    responses = [FakeResp(400, {"error": {"code": "GA001", "displayMessage": "Invalid TOTP"}}),
+                 FakeResp(200, {"token": "SECRET-ACCESS-TOKEN", "message": "SECRET-ACCESS-TOKEN"})]
+    monkeypatch.setattr(requests, "post", lambda url, **kw: responses.pop(0))
+    lines = []
+    undo = groww_trace.install(lines.append)
+    try:
+        requests.post("https://api.groww.in/v1/token/api/access", json={"totp": "123456"})
+        requests.post("https://api.groww.in/v1/token/api/access", json={"totp": "654321"})
+    finally:
+        undo()
+    assert 'GA001 "Invalid TOTP"' in lines[0]
+    assert "SECRET" not in lines[1] and "-> 200" in lines[1]

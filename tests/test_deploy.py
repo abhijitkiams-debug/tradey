@@ -154,3 +154,15 @@ def test_diagnose_login_explains_a_401(monkeypatch):
     assert steps["clock vs Groww"][0] == "PASS"
     assert steps["token exchange"][0] == "FAIL" and "--groww" in steps["token exchange"][1]
     assert "eyJ" not in str(steps)
+
+
+def test_key_issued_reads_only_time_claims():
+    import base64
+    import json
+
+    from claudetrade.broker.groww_auth import key_issued
+
+    claims = base64.urlsafe_b64encode(json.dumps({"iat": 1793291796, "exp": 2581691796, "sub": "PRIVATE"}).encode()).decode().rstrip("=")
+    out = key_issued(f"eyJhbGciOiJFUzI1NiJ9.{claims}.sig")
+    assert out.startswith("issued 29 Oct 2026") and "PRIVATE" not in out
+    assert key_issued("garbage") == "issue time unreadable"

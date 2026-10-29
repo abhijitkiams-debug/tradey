@@ -26,19 +26,27 @@ def _describe(method: str, url: str, kwargs: dict, resp, elapsed_ms: float) -> s
     path = u.path + (f"?{urlencode(params, doseq=True)}" if params else "")
     req_id = (kwargs.get("headers") or {}).get("x-request-id", "")
     status, code, msg = "", "", ""
-    try:
-        body = resp.json()
-        status = str(body.get("status", ""))
-        err = body.get("error") or {}
-        if isinstance(err, dict):
-            code, msg = str(err.get("code", "") or ""), str(err.get("message", "") or "")
-    except Exception:  # noqa: BLE001 - non-JSON body
-        status = "non-JSON"
+    is_token = "/token/" in u.path
+    # A successful token response carries the access token: never parse or show it.
+    if not (is_token and resp.status_code < 400):
+        try:
+            body = resp.json()
+            status = str(body.get("status", "") or "")
+            err = body.get("error") or {}
+            if isinstance(err, dict):
+                code = str(err.get("code", "") or "")
+                msg = str(err.get("displayMessage") or err.get("message") or "")
+            elif isinstance(err, str):
+                msg = err
+            if not msg and isinstance(body.get("message"), str):
+                msg = body["message"]
+        except Exception:  # noqa: BLE001 - non-JSON body
+            status = "non-JSON"
     line = f"{method:4} {path} -> {resp.status_code} {status}".rstrip()
     if code or msg:
         line += f" {code} \"{msg[:200]}\""
-    if "/token/" in u.path:
-        line += "  [token exchange: body/response never shown]"
+    if is_token:
+        line += "  [token exchange: request body and any token never shown]"
     return line + f"  ({elapsed_ms:.0f} ms, req {req_id})"
 
 

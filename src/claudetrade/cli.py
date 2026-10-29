@@ -268,7 +268,7 @@ def cmd_groww_debug(args) -> int:
     from datetime import datetime, timedelta
 
     from .app import system_clock
-    from .broker.groww_auth import key_shape, login_from_env
+    from .broker.groww_auth import clock_skew_seconds, key_issued, key_shape, login_from_env
     from .broker.groww_trace import install, public_ips
     from .settings import load_settings
 
@@ -279,7 +279,12 @@ def cmd_groww_debug(args) -> int:
     print(f"time     : {system_clock():%Y-%m-%d %H:%M:%S} IST")
     for k, v in public_ips().items():
         print(f"public {k}: {v}")
-    print(f"api key  : {key_shape(os.environ.get('GROWW_API_KEY', ''))}")
+    key = os.environ.get("GROWW_API_KEY", "")
+    secret = (os.environ.get("GROWW_TOTP_SECRET") or "").replace(" ", "").upper()
+    print(f"api key  : {key_shape(key)}; {key_issued(key)}")
+    print(f"totp sec : {len(secret)} chars, {'valid base32' if secret and all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567=' for c in secret) else 'NOT valid base32'}")
+    skew = clock_skew_seconds()
+    print(f"clock    : {'unknown' if skew is None else f'{skew:+.0f} s vs Groww'}")
     print("--- Groww calls (read-only) ---")
     install()
     try:
@@ -288,6 +293,8 @@ def cmd_groww_debug(args) -> int:
         client = login()
     except Exception as e:  # noqa: BLE001
         print(f"login failed: {type(e).__name__} [{getattr(e, 'code', '')}] {getattr(e, 'msg', e)}")
+        print("hint: a 400/401 here usually means the key was revoked/deleted on Groww Cloud, or the TOTP secret "
+              "is from a different key. Create a new TOTP key, then: ./deploy/setup-local.sh --groww")
         return 1
     now = system_clock()
     probes = [

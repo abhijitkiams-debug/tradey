@@ -120,6 +120,24 @@ def key_shape(value: str) -> str:
     return ", ".join(notes)
 
 
+def key_issued(value: str) -> str:
+    """When a JWT-shaped key was issued/expires, from its (unsigned, non-secret) claims only.
+    Lets you tell an old, revoked key from a new one without showing the key."""
+    import base64
+    import json
+    from datetime import timezone
+    from zoneinfo import ZoneInfo
+
+    try:
+        part = value.strip().split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+        ist = ZoneInfo("Asia/Kolkata")
+        fmt = lambda t: datetime.fromtimestamp(int(t), timezone.utc).astimezone(ist).strftime("%d %b %Y %H:%M IST")  # noqa: E731
+        return f"issued {fmt(claims['iat'])}" + (f", expires {fmt(claims['exp'])}" if "exp" in claims else "")
+    except Exception:  # noqa: BLE001
+        return "issue time unreadable"
+
+
 def clock_skew_seconds(url: str = "https://api.groww.in") -> float | None:
     """Local clock minus Groww's server clock (from the HTTP Date header); TOTP needs < ~30 s."""
     import urllib.error
@@ -147,7 +165,7 @@ def diagnose_login() -> list[tuple[str, str, str]]:
     key = os.environ.get("GROWW_API_KEY", "")
     secret = os.environ.get("GROWW_TOTP_SECRET", "")
     if key:
-        out.append(("INFO", "GROWW_API_KEY shape", key_shape(key)))
+        out.append(("INFO", "GROWW_API_KEY shape", f"{key_shape(key)}; {key_issued(key)}"))
     skew = clock_skew_seconds()
     if skew is None:
         out.append(("WARN", "clock vs Groww", "could not read Groww's server time"))
@@ -181,7 +199,9 @@ def diagnose_login() -> list[tuple[str, str, str]]:
         elif code_ == "403":
             hint = "Groww refused access: check the Trading API subscription is active for this account"
         elif code_ == "400":
-            hint = f"Groww rejected the login: {msg}. Usually the TOTP code: check GROWW_TOTP_SECRET and the clock"
+            hint = (f"Groww rejected the login: {msg}. Usual causes: the key was revoked/deleted on Groww Cloud "
+                    "(check its issue time above), or the TOTP secret doesn't belong to this token. Create a new "
+                    "TOTP key and run ./deploy/setup-local.sh --groww")
         else:
             hint = f"{type(e).__name__}: {msg}"
         out.append(("FAIL", "token exchange", hint))
