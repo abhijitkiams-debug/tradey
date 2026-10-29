@@ -152,6 +152,11 @@ def cmd_groww_check(args) -> int:
     return 0
 
 
+def _groww_error(e: Exception) -> str:
+    code, msg = getattr(e, "code", None), getattr(e, "msg", None) or str(e)
+    return f"{type(e).__name__}" + (f" [code {code}]" if code else "") + (f": {msg}" if msg else "")
+
+
 def cmd_doctor(args) -> int:
     """Pre-flight checks before (re)starting the service. Read-only: places no orders."""
     import os
@@ -237,7 +242,7 @@ def cmd_doctor(args) -> int:
                     age = (now - q.source_ts).total_seconds() / 60 if q else None
                     rec("PASS" if q else "FAIL", f"quote {sym}", f"₹{q.ltp}, last trade {age:.0f} min ago" if q else "no price")
                 except Exception as e:  # noqa: BLE001
-                    rec("FAIL", f"quote {sym}", type(e).__name__)
+                    rec("FAIL", f"quote {sym}", _groww_error(e))
             if s.universe:
                 sym = s.universe[0]
                 end = now
@@ -245,7 +250,13 @@ def cmd_doctor(args) -> int:
                 df = feed.candles(sym, datetime.combine(start.date(), datetime.min.time()), end)
                 rec("PASS" if len(df) else "FAIL", "history", f"{sym}: {len(df)} one-minute candles in the last 7 days")
         except Exception as e:  # noqa: BLE001
-            rec("FAIL", "groww", f"{type(e).__name__}: {e}")
+            rec("FAIL", "groww", _groww_error(e))
+        if any(st == "FAIL" and "forbidden" in d.lower() for st, _n, d in results):
+            rec("HINT", "access forbidden",
+                "login works but Groww refuses market data. Groww's docs put live quotes and history in the same "
+                "Trading API subscription (₹499/month) as orders, so check it is ACTIVE for this Groww account "
+                "(Groww Cloud). If it is, ask Groww support whether this API key has Live Data and Historical access, "
+                "quoting the error code above.")
     fails = sum(1 for st, *_ in results if st == "FAIL")
     print(f"\n{'READY' if not fails else 'NOT READY'}: {fails} failure(s), {sum(1 for st, *_ in results if st == 'WARN')} warning(s)")
     return 1 if fails else 0

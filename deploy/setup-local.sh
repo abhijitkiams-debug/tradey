@@ -37,16 +37,20 @@ fi
 read_secret() {  # $1 = prompt, $2 = hidden (1/0); result in REPLY_VALUE
   REPLY_VALUE=""
   if [[ -t 0 ]] && command -v pbpaste >/dev/null 2>&1; then
-    read -r -p "$1 — copy it in the browser, then press Enter here (read from the clipboard): " _
+    # -s: nothing typed or pasted here is ever shown (people paste out of habit).
+    local typed=""
+    IFS= read -r -s -p "$1 — copy it in the browser, then just press Enter here (do NOT paste): " typed || true
+    echo
     REPLY_VALUE="$(pbpaste)"
+    if [[ -z "$REPLY_VALUE" && -n "$typed" ]]; then REPLY_VALUE="$typed"; fi
+    typed=""
     printf '' | pbcopy 2>/dev/null || true   # don't leave the secret on the clipboard
-    echo "  read ${#REPLY_VALUE} characters from the clipboard"
+    echo "  read ${#REPLY_VALUE} characters (not shown)"
   elif [[ -t 0 ]]; then
     local old; old="$(stty -g)"
-    stty -icanon
-    if [[ "$2" == 1 ]]; then stty -echo; fi
-    IFS= read -r -p "$1: " REPLY_VALUE || true
-    stty "$old"; [[ "$2" == 1 ]] && echo
+    stty -icanon -echo   # never echo credentials
+    IFS= read -r -p "$1 (input hidden): " REPLY_VALUE || true
+    stty "$old"; echo
   else
     IFS= read -r REPLY_VALUE || true
   fi
@@ -60,7 +64,8 @@ In your browser:
   1. Open https://groww.in/trade-api/api-keys and sign in.
   2. Next to "Generate API Key", open the dropdown and choose "Generate TOTP token".
   3. Name it (e.g. claudetrade) and continue.
-  4. You'll see a TOTP token (long) and a TOTP secret. Do not share them with anyone, including in chat.
+  4. You'll see a TOTP token (long) and a TOTP secret. Never share them, and never paste terminal
+     output that shows them: anyone with both can use your Groww API.
 TXT
   read_secret "Groww TOTP token" 0; GROWW_KEY="$REPLY_VALUE"
   read_secret "Groww TOTP secret" 1; GROWW_SECRET="$(printf '%s' "$REPLY_VALUE" | tr -d ' ' | tr '[:lower:]' '[:upper:]')"
