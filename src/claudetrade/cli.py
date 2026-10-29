@@ -256,14 +256,75 @@ def cmd_doctor(args) -> int:
                 "login works but Groww refuses market data. Groww's docs put live quotes and history in the same "
                 "Trading API subscription (₹499/month) as orders, so check it is ACTIVE for this Groww account "
                 "(Groww Cloud). If it is, ask Groww support whether this API key has Live Data and Historical access, "
-                "quoting the error code above.")
+                "quoting the error code above. For a per-request trace with request ids: claudetrade groww-debug")
     fails = sum(1 for st, *_ in results if st == "FAIL")
     print(f"\n{'READY' if not fails else 'NOT READY'}: {fails} failure(s), {sum(1 for st, *_ in results if st == 'WARN')} warning(s)")
     return 1 if fails else 0
 
 
+def cmd_groww_debug(args) -> int:
+    """Trace each read-only Groww call (status, Groww error code/message, request id) plus this
+    machine's public IPs. Safe to share: no tokens, secrets, codes or balances are printed."""
+    from datetime import datetime, timedelta
+
+    from .app import system_clock
+    from .broker.groww_auth import key_shape, login_from_env
+    from .broker.groww_trace import install, public_ips
+    from .settings import load_settings
+
+    s = load_settings(args.config) if args.config else None
+    sym = (s.universe[0] if s and s.universe else "ITC")
+    import os
+
+    print(f"time     : {system_clock():%Y-%m-%d %H:%M:%S} IST")
+    for k, v in public_ips().items():
+        print(f"public {k}: {v}")
+    print(f"api key  : {key_shape(os.environ.get('GROWW_API_KEY', ''))}")
+    print("--- Groww calls (read-only) ---")
+    install()
+    try:
+        login, flow = login_from_env()
+        print(f"login flow: {flow}")
+        client = login()
+    except Exception as e:  # noqa: BLE001
+        print(f"login failed: {type(e).__name__} [{getattr(e, 'code', '')}] {getattr(e, 'msg', e)}")
+        return 1
+    now = system_clock()
+    probes = [
+        ("user profile", lambda: client.get_user_profile(timeout=10)),
+        ("margin", lambda: client.get_available_margin_details(timeout=10)),
+        ("quote", lambda: client.get_quote(trading_symbol=sym, exchange="NSE", segment="CASH", timeout=10)),
+        ("ltp", lambda: client.get_ltp(exchange_trading_symbols=(f"NSE_{sym}",), segment="CASH", timeout=10)),
+        ("ohlc", lambda: client.get_ohlc(exchange_trading_symbols=(f"NSE_{sym}",), segment="CASH", timeout=10)),
+        ("history 1d", lambda: client.get_historical_candles(
+            exchange="NSE", segment="CASH", groww_symbol=f"NSE-{sym}",
+            start_time=(now - timedelta(days=10)).strftime("%Y-%m-%d 09:15:00"),
+            end_time=now.strftime("%Y-%m-%d %H:%M:%S"), candle_interval="1day", timeout=20)),
+        ("order list", lambda: client.get_order_list(page=0, page_size=5, segment="CASH", timeout=10)),
+    ]
+    results = {}
+    for name, call in probes:
+        try:
+            r = call()
+            results[name] = "OK"
+            if name == "user profile" and isinstance(r, dict):  # only entitlement flags, no personal data
+                flags = {k: r.get(k) for k in ("active_segments", "nse_enabled", "bse_enabled", "ddpi_enabled") if k in r}
+                print(f"    profile flags: {flags}")
+        except Exception as e:  # noqa: BLE001
+            results[name] = f"{type(e).__name__} [{getattr(e, 'code', '')}] {getattr(e, 'msg', '')}".strip()
+    print("--- summary ---")
+    for name, r in results.items():
+        print(f"{name:12}: {r}")
+    print(f"\n(checked at {datetime.now():%H:%M:%S}; safe to share — no tokens, secrets or balances above)")
+    return 0 if all(v == "OK" for v in results.values()) else 1
+
+
 def cmd_serve(args) -> int:
+    import logging
+
     import uvicorn
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     from .desk import build_desk
     from .server import create_app
@@ -295,6 +356,9 @@ def main(argv: list[str] | None = None) -> int:
     dc.add_argument("--config", required=True)
     dc.add_argument("--send-test-alert", action="store_true")
     dc.set_defaults(fn=cmd_doctor)
+    gd = sub.add_parser("groww-debug", help="trace read-only Groww calls (status, error codes, request ids, public IP)")
+    gd.add_argument("--config", default=None)
+    gd.set_defaults(fn=cmd_groww_debug)
     sp = sub.add_parser("serve", help="run scheduler + operator API/dashboard")
     sp.add_argument("--config", default=None, help="TOML settings file")
     sp.add_argument("--host", default="127.0.0.1")

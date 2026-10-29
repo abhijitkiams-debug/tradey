@@ -68,7 +68,10 @@ class GrowwFeed:
                 try:
                     q = self.quote(s)
                 except Exception as e:  # noqa: BLE001 - any failure just means no fresh quote
+                    from .broker.groww_trace import log_error
+
                     self.errors[s] = type(e).__name__
+                    log_error(f"get_quote({s})", e)
                     self._last.pop(s, None)
                     continue
                 if q is None:

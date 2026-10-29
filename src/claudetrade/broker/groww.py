@@ -130,6 +130,9 @@ class GrowwBroker:
         except Exception as e:
             kind = _err_kind(e)
             self.last_error = f"{fn}: {type(e).__name__}"  # never include payloads (may echo tokens)
+            from .groww_trace import log_error
+
+            log_error(fn, e)
             if kind == "auth":
                 self._auth_failed = True
             e.kind = kind  # type: ignore[attr-defined]

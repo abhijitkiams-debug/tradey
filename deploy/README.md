@@ -26,6 +26,14 @@ TOTP secret (the secret is typed hidden) and writes them to `.env` (permissions 
 generates your operator token, creates the config, runs `claudetrade doctor`, and starts paper
 trading. At the end it prints the dashboard address (http://127.0.0.1:8000) and your sign-in token.
 
+**If Groww calls fail**, trace them (read-only; prints status, Groww error codes, request ids
+and your public IPs, never tokens or secrets, so it's safe to share or send to Groww support):
+
+```bash
+docker compose run --rm --entrypoint claudetrade desk groww-debug --config /config/claudetrade.toml
+docker compose logs desk | grep claudetrade.groww      # Groww errors seen by the running service
+```
+
 To use an always-on server instead, follow the steps below.
 
 ## 1. A server
