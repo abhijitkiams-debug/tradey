@@ -212,11 +212,16 @@ def cmd_doctor(args) -> int:
     else:
         try:
             from .broker.groww import GrowwBroker, RateLimiter
-            from .broker.groww_auth import RefreshingGrowwClient, login_from_env
+            from .broker.groww_auth import RefreshingGrowwClient, diagnose_login, login_from_env
             from .feeds import GrowwFeed
             from .market_data import MarketDataService
 
             login, flow = login_from_env()
+            steps = diagnose_login() if flow == "totp" else []
+            for st in steps:
+                rec(*st)
+            if any(st[0] == "FAIL" and st[1] == "token exchange" for st in steps):
+                raise RuntimeError("Groww login failed (see token exchange above); skipping quote/history checks")
             client = RefreshingGrowwClient(login, system_clock, flow)
             b = GrowwBroker(client, system_clock)
             rec("PASS" if b.heartbeat() else "FAIL", "groww login", f"flow={flow}" + (f" ({b.last_error})" if b.last_error else ""))

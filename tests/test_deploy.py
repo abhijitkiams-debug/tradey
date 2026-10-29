@@ -120,3 +120,37 @@ def test_mid_session_switch_retries_until_data_arrives(tmp_path):
                             "day_change": 0, "last_trade_time": ms - 500}
     assert "validate" in desk.run_pending()["paper"]
     assert sv.content_hash in desk.paper.app.intraday.active
+
+
+def test_key_shape_never_reveals_value_and_flags_truncation():
+    from claudetrade.broker.groww_auth import key_shape
+
+    s = key_shape("x" * 1024)
+    assert "TRUNCATED" in s and "x" not in s.replace("exactly", "")
+    assert "JWT-shaped" in key_shape("eyJhbGc.eyJzdWIi.c2lnbmF0dXJl")
+    assert "whitespace" in key_shape(" abc.def.ghi ")
+
+
+def test_diagnose_login_explains_a_401(monkeypatch):
+    pytest.importorskip("pyotp")
+    import sys
+    import types
+
+    from fake_groww import GrowwAPIAuthenticationException
+
+    from claudetrade.broker import groww_auth
+
+    class FakeAPI:
+        @staticmethod
+        def get_access_token(api_key, totp=None, secret=None):
+            raise GrowwAPIAuthenticationException()
+
+    monkeypatch.setitem(sys.modules, "growwapi", types.SimpleNamespace(GrowwAPI=FakeAPI))
+    monkeypatch.setattr(groww_auth, "clock_skew_seconds", lambda url="": 2.0)
+    monkeypatch.setenv("GROWW_API_KEY", "eyJ" + "a" * 1021)  # 1024 chars: cut off by the terminal
+    monkeypatch.setenv("GROWW_TOTP_SECRET", "JBSWY3DPEHPK3PXP")
+    steps = {name: (status, detail) for status, name, detail in groww_auth.diagnose_login()}
+    assert "TRUNCATED" in steps["GROWW_API_KEY shape"][1]
+    assert steps["clock vs Groww"][0] == "PASS"
+    assert steps["token exchange"][0] == "FAIL" and "--groww" in steps["token exchange"][1]
+    assert "eyJ" not in str(steps)

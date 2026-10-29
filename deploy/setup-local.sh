@@ -8,7 +8,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 START=1
-[[ "${1:-}" == "--no-start" ]] && START=0
+GROWW_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-start) START=0 ;;
+    --groww) GROWW_ONLY=1 ;;   # re-enter only the Groww token/secret in an existing .env
+  esac
+done
 
 say() { printf '\n== %s\n' "$*"; }
 
@@ -26,25 +32,65 @@ if [[ "${SKIP_DOCKER_CHECK:-0}" != 1 ]]; then
   echo "Docker OK"
 fi
 
-if [[ -f .env ]]; then
-  say ".env already exists — keeping it (delete it to start over)"
-else
+# Read a long secret safely. On macOS, from the clipboard (no terminal length limit, never shown);
+# otherwise with canonical mode off, because terminals silently cut pasted lines at ~1024 chars.
+read_secret() {  # $1 = prompt, $2 = hidden (1/0); result in REPLY_VALUE
+  REPLY_VALUE=""
+  if [[ -t 0 ]] && command -v pbpaste >/dev/null 2>&1; then
+    read -r -p "$1 — copy it in the browser, then press Enter here (read from the clipboard): " _
+    REPLY_VALUE="$(pbpaste)"
+    printf '' | pbcopy 2>/dev/null || true   # don't leave the secret on the clipboard
+    echo "  read ${#REPLY_VALUE} characters from the clipboard"
+  elif [[ -t 0 ]]; then
+    local old; old="$(stty -g)"
+    stty -icanon
+    if [[ "$2" == 1 ]]; then stty -echo; fi
+    IFS= read -r -p "$1: " REPLY_VALUE || true
+    stty "$old"; [[ "$2" == 1 ]] && echo
+  else
+    IFS= read -r REPLY_VALUE || true
+  fi
+  REPLY_VALUE="$(printf '%s' "$REPLY_VALUE" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+}
+
+ask_groww() {
   say "Groww Trade API (needs an active Trading API subscription on Groww)"
   cat <<'TXT'
 In your browser:
   1. Open https://groww.in/trade-api/api-keys and sign in.
   2. Next to "Generate API Key", open the dropdown and choose "Generate TOTP token".
   3. Name it (e.g. claudetrade) and continue.
-  4. Copy the TOTP token and the TOTP secret shown. Do not share them with anyone, including in chat.
+  4. You'll see a TOTP token (long) and a TOTP secret. Do not share them with anyone, including in chat.
 TXT
-  read -r -p "Paste the Groww TOTP token: " GROWW_KEY
-  read -r -s -p "Paste the Groww TOTP secret (input hidden): " GROWW_SECRET; echo
-  GROWW_SECRET="$(printf '%s' "$GROWW_SECRET" | tr -d ' ' | tr '[:lower:]' '[:upper:]')"
+  read_secret "Groww TOTP token" 0; GROWW_KEY="$REPLY_VALUE"
+  read_secret "Groww TOTP secret" 1; GROWW_SECRET="$(printf '%s' "$REPLY_VALUE" | tr -d ' ' | tr '[:lower:]' '[:upper:]')"
   if [[ -z "$GROWW_KEY" || -z "$GROWW_SECRET" ]]; then echo "Both values are required."; exit 1; fi
+  if [[ ${#GROWW_KEY} -eq 1023 || ${#GROWW_KEY} -eq 1024 ]]; then
+    echo "The token is exactly ${#GROWW_KEY} characters: it was almost certainly cut off. Try again."; exit 1
+  fi
+  if [[ "$GROWW_KEY" =~ ^[A-Z2-7]+=*$ && ${#GROWW_KEY} -lt 80 ]]; then
+    echo "That token looks like a TOTP *secret*. Paste the long TOTP token first, then the secret."; exit 1
+  fi
   if ! [[ "$GROWW_SECRET" =~ ^[A-Z2-7]+=*$ ]]; then
     echo "That secret doesn't look like a TOTP secret (letters A-Z and digits 2-7). Check you copied the secret, not the token."
     exit 1
   fi
+  echo "  token: ${#GROWW_KEY} characters; secret: ${#GROWW_SECRET} characters (values not shown)"
+}
+
+if [[ $GROWW_ONLY == 1 ]]; then
+  [[ -f .env ]] || { echo "No .env yet: run ./deploy/setup-local.sh without --groww"; exit 1; }
+  ask_groww
+  tmp="$(mktemp .env.XXXXXX)"
+  grep -vE '^(GROWW_API_KEY|GROWW_TOTP_SECRET)=' .env > "$tmp" || true
+  printf 'GROWW_API_KEY=%s\nGROWW_TOTP_SECRET=%s\n' "$GROWW_KEY" "$GROWW_SECRET" >> "$tmp"
+  chmod 600 "$tmp" && mv "$tmp" .env
+  unset GROWW_KEY GROWW_SECRET REPLY_VALUE
+  echo "Updated the Groww values in .env."
+elif [[ -f .env ]]; then
+  say ".env already exists — keeping it (re-enter Groww values with: ./deploy/setup-local.sh --groww)"
+else
+  ask_groww
 
   say "Phone alerts via Telegram (optional now, required before live; see docs/RUNBOOK.md §1)"
   read -r -p "Telegram bot token (Enter to skip): " TG_TOKEN
@@ -67,7 +113,7 @@ CLAUDETRADE_ALERT_MIN_SEVERITY=HIGH
 ANTHROPIC_API_KEY=
 ENV
   chmod 600 .env
-  unset GROWW_SECRET GROWW_KEY
+  unset GROWW_SECRET GROWW_KEY REPLY_VALUE
   echo "Wrote .env (permissions 600)."
 fi
 
