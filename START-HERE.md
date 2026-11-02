@@ -37,6 +37,18 @@ You need: a Mac or Windows computer, and a Groww account with the **Trading API 
 | ✔ Clear emergency stop | Use it when things are OK again. |
 | 🧪 Run practice | Replays the last market day to show what would have happened. Works at night too. |
 
+## Strategy Lab (new tab)
+
+Click **🧪 Strategy Lab ↗** at the top of the Home page. It opens in a new tab and **never places orders**.
+
+1. Pick a strategy: **😱 Buy the panic** (BNF), **🚀 Ride the leaders** (momentum), or **🔀 Both**.
+2. Press **▶ Test it on past prices**. The first time, it downloads about 6 years of daily prices
+   from Groww (around 10 minutes). After that it takes seconds.
+3. Read the verdict: did it beat just holding Nifty, and what was the worst fall?
+4. Press **🔎 Find today's signals**. If a stock matches, **Send for approval** puts it on your
+   list in Advanced → Swing proposals. Nothing is bought until you approve it there. To use this,
+   first set the SWING switch to PAPER in Advanced.
+
 ## Stop or update
 
 - **Stop ClaudeTrade:** stops it. Your history is saved.

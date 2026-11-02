@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Strategy Lab</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f4f6fb; --card: #ffffff; --ink: #14161b; --muted: #5f6675; --line: #e3e6ee;
+    --good: #16794a; --good-bg: #e7f6ee; --warn: #9a5b00; --warn-bg: #fff4dc; --bad: #b42318; --bad-bg: #fdeceb;
+    --blue: #3352d1; --blue-ink: #ffffff; --s1: #3352d1; --s2: #9aa1ad;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #101318; --card: #191d24; --ink: #eceef2; --muted: #a2a9b6; --line: #2b313b;
+            --good: #52d08f; --good-bg: #13291f; --warn: #f2b84b; --warn-bg: #2d2412; --bad: #ff7b6e; --bad-bg: #331a18;
+            --blue: #8297ff; --blue-ink: #0d1020; --s1: #8297ff; --s2: #6b7280; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 16px; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  header h1 { font-size: 22px; margin: 0; }
+  header nav { margin-left: auto; display: flex; gap: 14px; }
+  header nav a { color: var(--muted); font-size: 15px; }
+  .badge { background: var(--warn-bg); color: var(--warn); border-radius: 999px; padding: 3px 12px; font-size: 14px; font-weight: 600; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; margin-bottom: 14px; }
+  .muted { color: var(--muted); } .small { font-size: 14px; }
+  h2 { margin: 0 0 10px; font-size: 19px; } h3 { margin: 0 0 6px; font-size: 17px; }
+  .pick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .pick label { display: block; border: 2px solid var(--line); border-radius: 14px; padding: 14px; cursor: pointer; }
+  .pick input { position: absolute; opacity: 0; }
+  .pick label:has(input:checked) { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 8%, transparent); }
+  .pick input:focus-visible + h3 { outline: 2px solid var(--blue); outline-offset: 3px; }
+  .pick ul { margin: 6px 0 0 18px; padding: 0; font-size: 14px; color: var(--muted); }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+  button { font: inherit; font-weight: 600; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+           padding: 11px 18px; cursor: pointer; min-height: 46px; }
+  button.go { background: var(--blue); color: var(--blue-ink); border-color: var(--blue); }
+  button.sm { min-height: 36px; padding: 6px 12px; font-size: 14px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  select, input[type=number] { font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  input[type=number] { width: 100%; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 14px; }
+  .grid label { font-size: 14px; font-weight: 600; display: block; }
+  .grid small { display: block; color: var(--muted); font-weight: 400; }
+  details summary { cursor: pointer; font-weight: 600; }
+  fieldset { border: 1px solid var(--line); border-radius: 12px; margin: 12px 0 0; padding: 10px 14px 14px; }
+  legend { font-weight: 700; padding: 0 6px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .tile { border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .tile b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .tile span { color: var(--muted); font-size: 13px; }
+  .tile b i { font-style: normal; }
+  .up { color: var(--good); } .down { color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  td.n, th.n { text-align: right; }
+  .scroll { overflow-x: auto; }
+  .mood { display: flex; gap: 14px; align-items: flex-start; }
+  .mood .icon { font-size: 36px; line-height: 1; }
+  .note { padding: 10px 14px; border-radius: 12px; background: var(--warn-bg); color: var(--warn); font-weight: 600; margin-bottom: 12px; }
+  pre { white-space: pre-wrap; font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+  svg text { fill: var(--muted); font-size: 11px; }
+  .legend { display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+  #toast { position: fixed; left: 16px; right: 16px; bottom: 16px; max-width: 560px; margin: 0 auto; background: var(--ink); color: var(--bg);
+           padding: 12px 16px; border-radius: 12px; display: none; font-weight: 600; z-index: 9; }
+  @media (max-width: 760px) { .pick { grid-template-columns: 1fr; } .tiles { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🧪 Strategy Lab</h1><span class="badge">Research only: places no orders</span>
+    <nav><a href="/">Home</a><a href="/advanced">Advanced</a></nav>
+  </header>
+
+  <div class="card" id="signin" hidden>
+    <h2>Sign in</h2>
+    <p class="muted">Open this page from the <b>Strategy Lab</b> link on the Home page, or paste your operator token (from the .env file).</p>
+    <div class="row"><input id="tok" type="password" style="flex:1;padding:10px;border-radius:10px;border:1px solid var(--line)" aria-label="Operator token">
+      <button class="go" data-act="signin">Sign in</button></div>
+  </div>
+
+  <div id="app" hidden>
+    <div class="card" id="mood"><div class="mood"><div class="icon">🌤️</div><div>
+      <h2>Market mood</h2><p class="muted" style="margin:0">Press <b>Find today's signals</b> to check today's market.</p></div></div></div>
+
+    <div class="card">
+      <h2>1. Pick a strategy</h2>
+      <div class="pick" role="radiogroup" aria-label="Strategy">
+        <label><input type="radio" name="strategy" value="bnf"><h3>😱 Buy the panic (BNF)</h3>
+          <span class="muted small">Takashi Kotegawa's “kairi” idea</span>
+          <ul><li>Only when the whole market is crashing</li><li>Buy good stocks ≥15% below their 25-day average that bounce</li>
+              <li>Sell as they recover toward the average</li><li>Hold up to 7 days</li></ul></label>
+        <label><input type="radio" name="strategy" value="momentum"><h3>🚀 Ride the leaders (Momentum)</h3>
+          <span class="muted small">Minervini-style, as J Law is reported to trade</span>
+          <ul><li>Only when the market is rising</li><li>Strong stocks breaking out of tight bases on big volume</li>
+              <li>8% stop, half off at +20%, trail the rest</li><li>Hold days to weeks</li></ul></label>
+        <label><input type="radio" name="strategy" value="combined" checked><h3>🔀 Both, by market mood</h3>
+          <span class="muted small">“Adapt to the market”</span>
+          <ul><li>Rising market → Momentum</li><li>Panic crash → Buy the panic</li><li>Choppy in between → stay in cash</li>
+              <li>Max 5 trades at once</li></ul></label>
+      </div>
+
+      <details style="margin-top:14px"><summary>Settings (optional)</summary>
+        <fieldset><legend>Money</legend><div class="grid">
+          <label>Starting money (₹)<input type="number" data-p="capital" min="1000" step="1000"></label>
+          <label>Risk per trade (% of money)<small>1% of ₹10,000 = ₹100</small><input type="number" data-p="risk_pct" min="0.1" max="5" step="0.1"></label>
+          <label>Most trades at once<input type="number" data-p="max_positions" min="1" max="20" step="1"></label>
+          <label>Max money per trade (₹)<small>0 = money ÷ trades at once</small><input type="number" data-p="max_position_value" min="0" step="500"></label>
+          <label>Stocks to scan<select id="universe" style="width:100%"><option value="nifty200">Nifty 200</option>
+            <option value="nifty500">Nifty 500 (slower first download)</option></select></label>
+        </div></fieldset>
+        <fieldset><legend>😱 Buy the panic</legend><div class="grid">
+          <label>Stock below 25-day avg by (%)<small>e.g. −15 or −20</small><input type="number" data-p="bnf.entry_deviation_pct" step="1" max="0"></label>
+          <label>Panic: Nifty below its 25-day avg by (%)<input type="number" data-p="bnf.market_deviation_pct" step="0.5" max="0"></label>
+          <label>…or this % of stocks 10% below theirs<input type="number" data-p="bnf.breadth_panic_pct" step="5" min="0" max="100"></label>
+          <label>Stop loss (%)<input type="number" data-p="bnf.stop_pct" step="0.5" min="1"></label>
+          <label>Give up after (days)<input type="number" data-p="bnf.time_stop_days" step="1" min="1"></label>
+        </div></fieldset>
+        <fieldset><legend>🚀 Ride the leaders</legend><div class="grid">
+          <label>Stop loss (%)<small>never more than 10</small><input type="number" data-p="momentum.stop_pct" step="0.5" min="1" max="10"></label>
+          <label>Take half profit at (%)<input type="number" data-p="momentum.first_target_pct" step="1" min="5"></label>
+          <label>Breakout volume (× normal)<input type="number" data-p="momentum.breakout_volume_x" step="0.1" min="1"></label>
+          <label>Rising market: % of stocks above 50-day avg<input type="number" data-p="momentum.market_breadth_pct" step="5" min="0" max="100"></label>
+        </div></fieldset>
+        <div class="row"><button class="sm" data-act="reset">Reset to defaults</button></div>
+      </details>
+
+      <div class="row">
+        <button class="go" data-act="backtest" id="b-bt">▶ Test it on past prices</button>
+        <button data-act="scan" id="b-scan">🔎 Find today's signals</button>
+        <span id="busy" class="muted"></span>
+      </div>
+      <pre id="log" hidden></pre>
+    </div>
+
+    <div class="card" id="signals" hidden></div>
+    <div class="card" id="results" hidden></div>
+
+    <div class="card">
+      <h2>Be careful</h2>
+      <ul id="limits" class="muted small" style="margin:0 0 0 18px;padding:0"></ul>
+      <p class="muted small" style="margin-bottom:0">Past results don't promise future ones. Famous traders' results also suffer from
+        survivorship bias: thousands tried similar methods and lost. This is for learning, not investment advice.</p>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const TOKEN_KEY = "ct-operator-token", SET_KEY = "ct-lab-settings";
+const store = { get(k, s = sessionStorage) { try { return s.getItem(k); } catch (e) { return null; } },
+                set(k, v, s = sessionStorage) { try { s.setItem(k, v); } catch (e) {} } };
+(function takeTokenFromLink() {
+  const m = location.hash.match(/token=([^&]+)/);
+  if (m) { store.set(TOKEN_KEY, decodeURIComponent(m[1])); history.replaceState(null, "", location.pathname); }
+})();
+let token = store.get(TOKEN_KEY), defaults = null, lastState = null, timer = null;
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const rs = (x) => x == null ? "—" : (x < 0 ? "−₹" : "₹") + Math.abs(x).toLocaleString("en-IN", {maximumFractionDigits: 0});
+const pct = (x, sign = true) => x == null ? "—" : (sign && x > 0 ? "+" : "") + Number(x).toFixed(1) + "%";
+const cls = (x) => x > 0 ? "up" : x < 0 ? "down" : "";
+
+function toast(msg, ms = 6000) { const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", ms); }
+async function api(path, method = "GET", body) {
+  const r = await fetch(path, {method, headers: {"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+                               body: body ? JSON.stringify(body) : undefined});
+  if (r.status === 401 || r.status === 503) { $("app").hidden = true; $("signin").hidden = false; throw new Error("Please sign in."); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Something went wrong. Please try again.");
+  return data;
+}
+
+// ---- settings form ----
+const getPath = (o, p) => p.split(".").reduce((a, k) => a?.[k], o);
+function setPath(o, p, v) { const ks = p.split("."); let a = o; ks.slice(0, -1).forEach(k => a = a[k] ??= {}); a[ks.at(-1)] = v; }
+function fillForm(p) {
+  document.querySelectorAll("[data-p]").forEach(el => el.value = getPath(p, el.dataset.p));
+  const r = document.querySelector(`input[name=strategy][value="${p.strategy}"]`); if (r) r.checked = true;
+}
+function readForm() {
+  const p = {strategy: document.querySelector("input[name=strategy]:checked").value, bnf: {}, momentum: {}};
+  document.querySelectorAll("[data-p]").forEach(el => { if (el.value !== "") setPath(p, el.dataset.p, Number(el.value)); });
+  store.set(SET_KEY, JSON.stringify({p, u: $("universe").value}), localStorage);
+  return p;
+}
+
+const actions = {
+  signin() { token = $("tok").value.trim(); store.set(TOKEN_KEY, token); refresh(); },
+  reset() { fillForm(defaults); },
+  async backtest() { await run("backtest"); },
+  async scan() { await run("scan"); },
+  async propose(el) {
+    const s = el.dataset.sym;
+    if (!confirm(`Send ${s} to your approval list?\n\nNothing is bought yet: you still approve it yourself in Advanced → Swing proposals.`)) return;
+    el.disabled = true;
+    try { const r = await api("/api/lab-propose", "POST", {symbol: s}); toast(r.message, 9000); }
+    catch (e) { toast(e.message); } finally { el.disabled = false; }
+  },
+};
+async function run(job) {
+  try { const r = await api("/api/lab/" + job, "POST", {params: readForm(), universe: $("universe").value}); toast(r.message); poll(); }
+  catch (e) { toast(e.message); }
+}
+document.addEventListener("click", (ev) => { const b = ev.target.closest("[data-act]"); if (b && actions[b.dataset.act]) actions[b.dataset.act](b); });
+
+// ---- rendering ----
+const MOOD = {
+  PANIC: ["😱", "Panic: the whole market is being sold off", "This is when “Buy the panic” looks for bargains. Momentum waits."],
+  UPTREND: ["📈", "Rising market", "This is when “Ride the leaders” looks for breakouts. Buy-the-panic waits."],
+  CHOPPY: ["🌫️", "Choppy: no clear direction", "Both strategies mostly wait in cash. Doing nothing is a valid choice."],
+};
+function renderMood(scan) {
+  if (!scan) return;
+  const [icon, title, text] = MOOD[scan.regime] || MOOD.CHOPPY, m = scan.market;
+  $("mood").innerHTML = `<div class="mood"><div class="icon">${icon}</div><div><h2>${esc(title)}</h2>
+    <p style="margin:0 0 6px">${esc(text)}</p>
+    <p class="muted small" style="margin:0">On ${esc(scan.as_of)}: Nifty ${m.nifty.toLocaleString("en-IN")} is ${pct(m.nifty_vs_25dma_pct)} vs its 25-day average
+    and ${m.nifty_above_50dma ? "above" : "below"} its 50-day average. ${m.stocks_above_50dma_pct}% of stocks are above their 50-day average;
+    ${m.stocks_10pct_below_25dma_pct}% are more than 10% below their 25-day average.</p></div></div>`;
+}
+function renderSignals(scan) {
+  if (!scan) return;
+  const el = $("signals"); el.hidden = false;
+  const fake = !scan.data?.real;
+  const rows = scan.signals.map(s => `<tr><td><b>${esc(s.symbol)}</b><br><span class="muted">${esc(s.sector)}</span></td>
+    <td>${s.family === "bnf" ? "😱 Panic" : "🚀 Momentum"}</td><td class="n">₹${s.close}</td>
+    <td class="n">₹${s.entry_low}–${s.entry_high}</td><td class="n down">₹${s.stop}</td><td class="n up">₹${s.target_1} / ₹${s.target_2}</td>
+    <td class="n">${s.quantity}</td><td class="small">${esc(s.why)}</td>
+    <td>${s.too_expensive ? '<span class="muted small">1 share is over your per-order limit</span>'
+        : fake ? "" : `<button class="sm" data-act="propose" data-sym="${esc(s.symbol)}">Send for approval</button>`}</td></tr>`).join("");
+  el.innerHTML = `<h2>Today's signals</h2>${fake ? `<div class="note">${esc(scan.data.note)}</div>` : ""}
+    ${scan.signals.length ? `<div class="scroll"><table><thead><tr><th>Stock</th><th>Type</th><th class="n">Close</th><th class="n">Buy between</th>
+      <th class="n">Stop</th><th class="n">Targets</th><th class="n">Qty</th><th>Why</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="muted small">“Send for approval” only puts it on your list. Before approving, check the news: skip fraud, pledge or bad-results falls.</p>`
+    : `<p class="muted">No stock matches the rules today. That's normal: these setups are rare, and waiting is part of the method.</p>`}`;
+}
+function chart(curve) {
+  const W = 960, H = 260, P = 34, n = curve.length;
+  const vals = curve.flatMap(r => [r[1], r[2]]), lo = Math.min(...vals), hi = Math.max(...vals), span = (hi - lo) || 1;
+  const x = i => P + (W - 2 * P) * i / Math.max(n - 1, 1), y = v => H - P - (H - 2 * P) * (v - lo) / span;
+  const line = k => curve.map((r, i) => `${x(i).toFixed(1)},${y(r[k]).toFixed(1)}`).join(" ");
+  const ticks = [lo, (lo + hi) / 2, hi].map(v => `<text x="2" y="${y(v) + 4}">${rs(v)}</text>
+    <line x1="${P}" x2="${W - P}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/>`).join("");
+  const years = []; let last = "";
+  curve.forEach((r, i) => { const yy = r[0].slice(0, 4); if (yy !== last) { last = yy; years.push(`<text x="${x(i)}" y="${H - 10}">${yy}</text>`); } });
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Money over time: strategy vs Nifty">${ticks}${years.join("")}
+    <polyline fill="none" stroke="var(--s2)" stroke-width="1.5" points="${line(2)}"/>
+    <polyline fill="none" stroke="var(--s1)" stroke-width="2.2" points="${line(1)}"/></svg>
+    <div class="legend"><span><i style="background:var(--s1)"></i>This strategy</span><span><i style="background:var(--s2)"></i>Just holding Nifty 50</span></div>`;
+}
+function renderResults(r) {
+  if (!r) return;
+  const el = $("results"); el.hidden = false;
+  const m = r.metrics, b = r.benchmark, name = {bnf: "😱 Buy the panic", momentum: "🚀 Ride the leaders", combined: "🔀 Both, by market mood"}[r.params.strategy];
+  const beat = m.cagr_pct > b.cagr_pct;
+  const verdict = m.trades === 0 ? "No trades at all in this period: the rules never triggered. Try looser settings, or accept that the setup is rare."
+    : `${beat ? "✅ Beat" : "❌ Did worse than"} just holding Nifty: ${pct(m.cagr_pct)} a year vs ${pct(b.cagr_pct)}, with a worst fall of ${pct(m.max_drawdown_pct, false)} vs ${pct(b.max_drawdown_pct, false)}.`;
+  const fam = Object.entries(r.by_family).filter(([, s]) => s.trades).map(([f, s]) => `<tr><td>${f === "bnf" ? "😱 Buy the panic" : "🚀 Ride the leaders"}</td>
+    <td class="n">${s.trades}</td><td class="n">${s.win_rate_pct}%</td><td class="n up">${pct(s.avg_win_pct)}</td><td class="n down">${pct(s.avg_loss_pct)}</td>
+    <td class="n">${s.profit_factor ?? "—"}</td><td class="n ${cls(s.net_pnl)}">${rs(s.net_pnl)}</td><td class="n">${s.avg_days}</td></tr>`).join("");
+  const yearly = r.yearly.map(y => `<tr><td>${y.year}</td><td class="n ${cls(y.strategy_pct)}">${pct(y.strategy_pct)}</td><td class="n ${cls(y.nifty_pct)}">${pct(y.nifty_pct)}</td></tr>`).join("");
+  const trades = r.trades.slice(-60).reverse().map(t => `<tr><td><b>${esc(t.symbol)}</b></td><td>${t.family === "bnf" ? "😱" : "🚀"}</td>
+    <td>${esc(t.entry_date)}</td><td>${esc(t.exit_date)}</td><td class="n">₹${t.entry}</td><td class="n">₹${t.exit}</td><td class="n">${t.qty}</td>
+    <td class="n ${cls(t.pnl)}">${rs(t.pnl)} (${pct(t.pnl_pct)})</td><td class="small">${esc(t.reason)}</td></tr>`).join("");
+  el.innerHTML = `<h2>Results: ${name}</h2>
+    ${r.data && !r.data.real ? `<div class="note">${esc(r.data.note)}</div>` : `<p class="muted small" style="margin-top:0">${esc(r.data?.note || "")}</p>`}
+    <p style="font-size:18px;font-weight:600">${verdict}</p>
+    <p class="muted small">${esc(r.period.start)} to ${esc(r.period.end)} · ${r.universe_size} stocks · starting with ${rs(r.params.capital)} ·
+      market was rising ${r.regime_days.UPTREND} days, panicking ${r.regime_days.PANIC}, choppy ${r.regime_days.CHOPPY}</p>
+    <div class="tiles">
+      <div class="tile"><b class="${cls(m.return_pct)}">${rs(m.final)}</b><span>ended with (Nifty: ${rs(b.final)})</span></div>
+      <div class="tile"><b class="${cls(m.cagr_pct)}">${pct(m.cagr_pct)}</b><span>per year (Nifty: ${pct(b.cagr_pct)})</span></div>
+      <div class="tile"><b class="down">${pct(m.max_drawdown_pct, false)}</b><span>worst fall (Nifty: ${pct(b.max_drawdown_pct, false)})</span></div>
+      <div class="tile"><b>${m.trades}</b><span>trades</span></div>
+      <div class="tile"><b>${m.win_rate_pct ?? "—"}${m.trades ? "%" : ""}</b><span>trades that made money</span></div>
+      <div class="tile"><b><i class="up">${pct(m.avg_win_pct)}</i> / <i class="down">${pct(m.avg_loss_pct)}</i></b><span>average win / loss</span></div>
+      <div class="tile"><b>${m.profit_factor ?? "—"}</b><span>profit factor (above 1 = makes money)</span></div>
+      <div class="tile"><b>${rs(m.total_costs)}</b><span>paid in fees and taxes</span></div>
+    </div>
+    <h3 style="margin-top:18px">Money over time</h3>${chart(r.equity_curve)}
+    ${fam ? `<h3 style="margin-top:18px">By strategy</h3><div class="scroll"><table><thead><tr><th></th><th class="n">Trades</th><th class="n">Won</th>
+      <th class="n">Avg win</th><th class="n">Avg loss</th><th class="n">Profit factor</th><th class="n">Net</th><th class="n">Avg days</th></tr></thead><tbody>${fam}</tbody></table></div>` : ""}
+    <h3 style="margin-top:18px">Year by year</h3><div class="scroll"><table style="max-width:420px"><thead><tr><th>Year</th><th class="n">Strategy</th><th class="n">Nifty</th></tr></thead><tbody>${yearly}</tbody></table></div>
+    ${trades ? `<details style="margin-top:16px"><summary>Trades (latest ${Math.min(r.trades.length, 60)})</summary><div class="scroll"><table>
+      <thead><tr><th>Stock</th><th></th><th>In</th><th>Out</th><th class="n">Buy</th><th class="n">Sell</th><th class="n">Qty</th><th class="n">Result</th><th>Why it ended</th></tr></thead>
+      <tbody>${trades}</tbody></table></div></details>` : ""}`;
+}
+function render(s) {
+  defaults = s.defaults;
+  $("limits").innerHTML = s.limits.map(l => `<li>${esc(l)}</li>`).join("");
+  const running = s.state === "running";
+  $("b-bt").disabled = $("b-scan").disabled = running;
+  $("busy").textContent = running ? `Working on the ${s.task === "scan" ? "signal check" : "backtest"}…` : "";
+  $("log").hidden = !(running || s.state === "error"); $("log").textContent = s.log.join("\n");
+  renderMood(s.scan); renderSignals(s.scan); renderResults(s.result);
+}
+function poll() { clearTimeout(timer); timer = setTimeout(refresh, 1500); }
+async function refresh() {
+  if (!token) { $("signin").hidden = false; return; }
+  try {
+    const s = await api("/api/lab");
+    $("signin").hidden = true; $("app").hidden = false;
+    if (lastState === null) {
+      const saved = JSON.parse(store.get(SET_KEY, localStorage) || "null");
+      fillForm(saved?.p ? {...s.defaults, ...saved.p, bnf: {...s.defaults.bnf, ...saved.p.bnf}, momentum: {...s.defaults.momentum, ...saved.p.momentum}} : s.defaults);
+      if (saved?.u) $("universe").value = saved.u;
+    }
+    const key = s.state + ":" + s.finished, changed = lastState !== key || s.state === "running";
+    lastState = key;
+    if (changed) render(s);
+    if (s.state === "running") poll();
+  } catch (e) { toast(e.message); }
+}
+refresh();
+</script>
+</body>
+</html>

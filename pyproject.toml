@@ -23,7 +23,7 @@ claudetrade = "claudetrade.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-claudetrade = ["static/*.html"]
+claudetrade = ["static/*.html", "data/*.csv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

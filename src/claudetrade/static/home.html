@@ -64,7 +64,8 @@
   <header>
     <h1>ClaudeTrade</h1>
     <span class="badge">Practice mode · pretend money</span>
-    <a href="/advanced">Advanced ›</a>
+    <a class="lablink" href="/lab" target="_blank" rel="noopener">🧪 Strategy Lab ↗</a>
+    <a href="/advanced" style="margin-left:0">Advanced ›</a>
   </header>
 
   <div id="signin" class="card" hidden>
@@ -142,6 +143,9 @@ const store = { get(k) { try { return sessionStorage.getItem(k); } catch (e) { r
   if (m) { store.set(TOKEN_KEY, decodeURIComponent(m[1])); history.replaceState(null, "", location.pathname); }
 })();
 let token = store.get(TOKEN_KEY), restarting = false;
+
+// Strategy Lab opens in a new tab; pass the sign-in along in the # part (never sent to a server).
+document.addEventListener("click", (ev) => { const a = ev.target.closest("a.lablink"); if (a && token) a.href = "/lab#token=" + encodeURIComponent(token); }, true);
 const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 

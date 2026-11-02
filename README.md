@@ -78,6 +78,32 @@ risks, max loss and a hash-bound Approve button), approvals to execute, intraday
 results with Release buttons, alerts, reconciliation and the audit trail. The controls are kill
 switch, pause/resume, manual square-off, reconcile, approve limits, and authorise/revoke live.
 
+## Strategy Lab: positional strategies (`/lab`)
+
+The Lab is a separate page that opens in its own tab from Home or Advanced. It is research
+only. The rules live in `positional.py` and the service in `lab.py`.
+
+| Strategy | When it trades | Entry | Exit |
+|---|---|---|---|
+| **BNF kairi** (Kotegawa, as reported) | Panic: Nifty ≥5% below its 25-DMA, or ≥60% of stocks >10% below theirs | Close ≥15% below its 25-DMA, closing in the upper half of the day's range; Nifty 200 only | Stop at the signal-day low or −7%, whichever is hit first. Sell half at 50% of the way back to the 25-DMA and the rest at the 25-DMA. Time stop after 7 days |
+| **Momentum** (Minervini-style; J Law's exact rules are unpublished) | Uptrend: Nifty above its 50-DMA and ≥50% of stocks above theirs | Trend template (price > 50 > 150 > 200-DMA, 200-DMA rising, ≥30% above the 52-week low, within 25% of the 52-week high, beating Nifty over 6 months). Breakout from a 60-day base with three shrinking pullbacks (last ≤10%) on ≥1.5× volume | Stop −8%. Sell half at +20%, then move the stop to break-even. Trail the rest with the 50-DMA |
+| **Combined** | Either of the two, chosen by market regime; cash when the market is choppy | as above | as above |
+
+Every strategy uses the same backtest settings:
+
+- Daily bars from Groww, fetched in 180-day chunks and cached in `var/daily/`. Groww's history starts in 2020.
+- Signals on the close; fills at the next open, and a gap through the stop fills at the open.
+- Sizing at 1% risk per trade, at most 5 positions.
+- Delivery (`CostModel` CNC) costs and 10 bps slippage.
+
+Results are reported against Nifty 50 buy-and-hold: CAGR, maximum drawdown, win rate, average win and loss, profit factor, costs, and a year-by-year table.
+
+The known biases are listed on the page: today's index members (survivorship), no circuit limits, and no news filter.
+
+**Find today's signals** sizes each candidate with your per-order limit. **Send for approval** files a normal `swing-proposal/1`, anchored to a live quote, into the book the SWING switch points at. A human still approves it (hash-bound), and every risk check still applies.
+
+From the terminal: `claudetrade lab --strategy combined [--universe nifty500] [--synthetic] [--json out.json]`.
+
 ## Development
 
 ```bash

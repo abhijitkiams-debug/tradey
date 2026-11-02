@@ -67,6 +67,15 @@ class PracticeReq(BaseModel):
     day: date | None = None
 
 
+class LabRun(BaseModel):
+    params: dict[str, Any] = Field(default_factory=dict)
+    universe: str = "nifty200"
+
+
+class LabPropose(BaseModel):
+    symbol: str = Field(min_length=1, max_length=30)
+
+
 class SetMode(BaseModel):
     mode: StrategyMode
     confirm: str | None = None
@@ -188,6 +197,37 @@ def create_app(target: Desk | Runtime, token: str | None = None) -> FastAPI:
         if not getattr(desk, "settings", None):
             raise HTTPException(409, "practice needs the full desk (claudetrade serve)")
         return {"ok": True, "message": desk.practice.start(desk, body.day)}
+
+    # ---- Strategy Lab (positional strategies: BNF, momentum, combined) -------------------------
+    from .lab import Lab
+
+    if not hasattr(desk, "lab"):
+        settings = getattr(desk, "settings", None)
+        desk.lab = Lab(Path(settings.research.cache_dir).parent / "daily" if settings else "var/daily")
+
+    @api.get("/lab", response_class=HTMLResponse)
+    def lab_page() -> str:
+        return (STATIC / "lab.html").read_text()
+
+    @api.get("/api/lab")
+    def lab_status(op: str = Depends(operator)) -> dict:
+        from .positional import LIMITS, BacktestParams
+
+        return to_jsonable({**desk.lab.status(), "defaults": BacktestParams().to_dict(), "limits": LIMITS})
+
+    @api.post("/api/lab/{job}")
+    def lab_job(job: str, body: LabRun, op: str = Depends(operator)) -> dict:
+        fn = {"backtest": desk.lab.start_backtest, "scan": desk.lab.start_scan}.get(job)
+        if fn is None:
+            raise HTTPException(404, "unknown lab job")
+        try:
+            return {"ok": True, "message": fn(desk, body.params, body.universe)}
+        except (TypeError, ValueError) as e:
+            raise HTTPException(409, f"bad settings: {e}") from None
+
+    @api.post("/api/lab-propose")
+    def lab_propose(body: LabPropose, op: str = Depends(operator)) -> dict:
+        return {"ok": True, "message": guarded(desk.lab.propose, desk, body.symbol.strip().upper(), op)}
 
     @api.post("/api/setup/groww")
     def setup_groww(body: GrowwSetup, op: str = Depends(operator)) -> dict:

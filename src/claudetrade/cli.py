@@ -392,6 +392,40 @@ def cmd_replay_day(args) -> int:
     return 0
 
 
+def cmd_lab(args) -> int:
+    """Strategy Lab from the terminal: backtest the positional strategies (BNF, momentum, combined)."""
+    from datetime import date as _date
+
+    from . import positional as pos
+    from .app import system_clock
+    from .settings import Settings, load_settings
+
+    s = load_settings(args.config) if args.config else Settings()
+    universe = pos.load_universe(args.universe)
+    today = system_clock().date()
+    if args.synthetic:
+        data, index = pos.synthetic_dataset(list(universe)[:120], _date(2020, 1, 1), today)
+        print("data: MADE-UP daily prices (pipeline test only, says nothing about markets)")
+    else:
+        from .feeds import GrowwFeed
+        from .runtime import _groww_client
+
+        feed = GrowwFeed(_groww_client(), None, system_clock)
+        cache = Path(s.research.cache_dir).parent / "daily"
+        start = today - timedelta(days=int(args.years * 365.25))
+        data, index, errors = pos.load_dataset(feed, universe, start, today, cache, progress=lambda m: print(m, flush=True))
+        print(f"data: real Groww daily prices, {len(data)} stocks" + (f", {len(errors)} skipped" if errors else ""))
+    params = pos.BacktestParams.from_dict({"strategy": args.strategy, "capital": float(s.risk.starting_capital)})
+    bnf_only = set(pos.load_universe("nifty200")) if args.universe != "nifty200" else None
+    res = pos.backtest(data, index, params, sectors=universe, bnf_symbols=bnf_only)
+    if args.json:
+        Path(args.json).write_text(json.dumps(res, indent=2, default=str))
+        print(f"full result written to {args.json}")
+    show = {k: res[k] for k in ("period", "universe_size", "metrics", "benchmark", "by_family", "regime_days", "yearly")}
+    print(json.dumps(show, indent=2, default=str))
+    return 0
+
+
 def cmd_serve(args) -> int:
     import logging
 
@@ -451,6 +485,14 @@ def main(argv: list[str] | None = None) -> int:
     rp.set_defaults(fn=cmd_replay_day)
     mc = sub.add_parser("mcp", help="MCP server (stdio) so Claude Desktop / Claude Code can operate the running desk")
     mc.set_defaults(fn=lambda a: (__import__("claudetrade.mcp_server", fromlist=["main"]).main(), 0)[1])
+    lb = sub.add_parser("lab", help="Strategy Lab: backtest BNF / momentum / combined on daily prices (with costs, vs Nifty)")
+    lb.add_argument("--config", default=None)
+    lb.add_argument("--strategy", choices=("bnf", "momentum", "combined"), default="combined")
+    lb.add_argument("--universe", choices=("nifty200", "nifty500"), default="nifty200")
+    lb.add_argument("--years", type=float, default=7.0, help="history to fetch (Groww has data from 2020)")
+    lb.add_argument("--synthetic", action="store_true", help="made-up prices instead of Groww")
+    lb.add_argument("--json", default=None, help="write the full result (trades, equity curve) to this file")
+    lb.set_defaults(fn=cmd_lab)
     sp = sub.add_parser("serve", help="run scheduler + operator API/dashboard")
     sp.add_argument("--config", default=None, help="TOML settings file")
     sp.add_argument("--host", default="127.0.0.1")

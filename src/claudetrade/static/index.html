@@ -85,7 +85,7 @@
 <div id="app" hidden>
 <header><div class="bar">
   <h1>ClaudeTrade</h1>
-  <a href="/" style="color:var(--muted)">‹ Simple view</a>
+  <a href="/" style="color:var(--muted)">‹ Simple view</a> <a class="lablink" href="/lab" target="_blank" rel="noopener" style="color:var(--muted);margin-left:12px">🧪 Strategy Lab ↗</a>
   <span class="tabs" id="tabs"></span>
   <span id="masterchip"></span>
   <span id="chips" class="row"></span>
@@ -124,6 +124,9 @@ const TOKEN_KEY = "ct-operator-token", BOOK_KEY = "ct-book", CONFIRM = "ENABLE L
 const store = { get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
                 set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} } };
 let token = store.get(TOKEN_KEY), book = store.get(BOOK_KEY) || "paper", desk = null;
+
+// Strategy Lab opens in a new tab; pass the sign-in along in the # part (never sent to a server).
+document.addEventListener("click", (ev) => { const a = ev.target.closest("a.lablink"); if (a && token) a.href = "/lab#token=" + encodeURIComponent(token); }, true);
 const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const IST = {timeZone: "Asia/Kolkata"};
