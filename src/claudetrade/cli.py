@@ -344,6 +344,54 @@ def cmd_groww_debug(args) -> int:
     return 0 if all(v == "OK" for v in results.values()) else 1
 
 
+def cmd_replay_day(args) -> int:
+    """Off-hours paper test: replay a past trading day through the whole desk (separate database)."""
+    import os
+    from datetime import date as _date
+
+    from .app import system_clock
+    from .replay_day import groww_loader, last_trading_day, replay_day, synthetic_loader
+    from .settings import load_settings
+
+    s = load_settings(args.config) if args.config else __import__("claudetrade.settings", fromlist=["Settings"]).Settings()
+    if args.synthetic or not s.universe:
+        from dataclasses import replace
+
+        s = replace(s, universe=s.universe or ("ALPHA", "BRAVO", "CHARLIE", "DELTA"),
+                    default_avg_daily_volume=s.default_avg_daily_volume or 1_000_000)
+        load, traded = synthetic_loader(s)
+        print("data: SYNTHETIC random-walk bars (pipeline test only, says nothing about markets)")
+    else:
+        load, traded = groww_loader(s)
+        print("data: real 1-minute history from Groww")
+    day = _date.fromisoformat(args.date) if args.date else last_trading_day(system_clock(), traded)
+
+    serve = None
+    if args.serve:
+        import uvicorn
+
+        from .server import create_app
+
+        token = os.environ.get("CLAUDETRADE_OPERATOR_TOKEN")
+
+        def serve(desk):
+            uvicorn.run(create_app(desk, token=token), host=args.host, port=args.port, log_level="warning")
+        print(f"dashboard for the replay: http://127.0.0.1:{args.port} (sign in with your operator token)")
+    summary = replay_day(s, day, load, speed_s=args.speed, serve=serve)
+    summary.pop("_desk", None)
+    print("\n=== replay result ===")
+    print(json.dumps(summary, indent=2, default=str))
+    if args.serve:
+        print(f"\nReplay finished. Dashboard still up at http://127.0.0.1:{args.port} — Ctrl+C to stop.")
+        try:
+            import time as _t
+            while True:
+                _t.sleep(3600)
+        except KeyboardInterrupt:
+            pass
+    return 0
+
+
 def cmd_serve(args) -> int:
     import logging
 
@@ -384,6 +432,15 @@ def main(argv: list[str] | None = None) -> int:
     gd = sub.add_parser("groww-debug", help="trace read-only Groww calls (status, error codes, request ids, public IP)")
     gd.add_argument("--config", default=None)
     gd.set_defaults(fn=cmd_groww_debug)
+    rp = sub.add_parser("replay-day", help="off-hours paper test: replay a past trading day through the full desk")
+    rp.add_argument("--config", default=None)
+    rp.add_argument("--date", default=None, help="YYYY-MM-DD (default: the last trading day)")
+    rp.add_argument("--synthetic", action="store_true", help="use synthetic bars instead of Groww history")
+    rp.add_argument("--speed", type=float, default=0.0, help="seconds to wait per replayed minute (e.g. 0.2 to watch)")
+    rp.add_argument("--serve", action="store_true", help="serve the dashboard for the replay")
+    rp.add_argument("--host", default="127.0.0.1")
+    rp.add_argument("--port", type=int, default=8001)
+    rp.set_defaults(fn=cmd_replay_day)
     mc = sub.add_parser("mcp", help="MCP server (stdio) so Claude Desktop / Claude Code can operate the running desk")
     mc.set_defaults(fn=lambda a: (__import__("claudetrade.mcp_server", fromlist=["main"]).main(), 0)[1])
     sp = sub.add_parser("serve", help="run scheduler + operator API/dashboard")

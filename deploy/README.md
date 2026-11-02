@@ -34,6 +34,25 @@ docker compose run --rm --entrypoint claudetrade desk groww-debug --config /conf
 docker compose logs desk | grep claudetrade.groww      # Groww errors seen by the running service
 ```
 
+## Test paper trading any time (replay a past day)
+
+Outside market hours, replay the last trading day (or any `--date`) through the whole desk:
+research on the days before it, auto-PAPER, 09:20 validation, entries and simulated fills,
+stops, square-off and the end-of-day report, minute by minute on a simulated clock. It uses its
+own throwaway database (`var/replay/<date>.db`), so it never touches your real paper book and
+never counts toward the 72-hour record.
+
+```bash
+# real Groww 1-minute history, fastest (prints a JSON summary)
+docker compose run --rm --entrypoint claudetrade desk replay-day --config /config/claudetrade.toml
+
+# watch it in a dashboard at http://127.0.0.1:8001 (0.2 s per replayed minute ≈ 75 s per day)
+docker compose run --rm -p 127.0.0.1:8001:8001 --entrypoint claudetrade desk \
+  replay-day --config /config/claudetrade.toml --serve --host 0.0.0.0 --speed 0.2
+
+# options: --date 2026-10-30   --synthetic (no Groww needed; tests the pipeline only)
+```
+
 ## Control it from Claude (MCP)
 
 The desk includes an MCP server, so Claude on your Mac can operate it in chat ("what's running?",
