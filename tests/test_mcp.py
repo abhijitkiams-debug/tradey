@@ -64,6 +64,8 @@ def test_status_and_controls_go_through_the_api(env):
 
 def test_live_cannot_be_set_through_mcp(env):
     desk, srv = env
-    with pytest.raises(Exception):
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    with pytest.raises(ToolError, match="Input should be 'OFF' or 'PAPER'"):
         tool(srv, "set_strategy_mode", key="SWING", mode="LIVE", reason="try")
     assert desk.mode("SWING") is StrategyMode.OFF
