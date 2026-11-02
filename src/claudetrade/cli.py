@@ -378,6 +378,8 @@ def main(argv: list[str] | None = None) -> int:
     gd = sub.add_parser("groww-debug", help="trace read-only Groww calls (status, error codes, request ids, public IP)")
     gd.add_argument("--config", default=None)
     gd.set_defaults(fn=cmd_groww_debug)
+    mc = sub.add_parser("mcp", help="MCP server (stdio) so Claude Desktop / Claude Code can operate the running desk")
+    mc.set_defaults(fn=lambda a: (__import__("claudetrade.mcp_server", fromlist=["main"]).main(), 0)[1])
     sp = sub.add_parser("serve", help="run scheduler + operator API/dashboard")
     sp.add_argument("--config", default=None, help="TOML settings file")
     sp.add_argument("--host", default="127.0.0.1")

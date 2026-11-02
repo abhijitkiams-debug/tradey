@@ -34,6 +34,41 @@ docker compose run --rm --entrypoint claudetrade desk groww-debug --config /conf
 docker compose logs desk | grep claudetrade.groww      # Groww errors seen by the running service
 ```
 
+## Control it from Claude (MCP)
+
+The desk includes an MCP server, so Claude on your Mac can operate it in chat ("what's running?",
+"switch ORB to paper", "pause intraday entries, there's news"). It runs inside the container and
+uses the desk's own API, so the same checks and audit trail apply. Actions are recorded as
+`operator:claude-mcp`, and no token goes into Claude's config.
+
+- **Claude can:** read status, strategies and paper-record progress, books, proposals, research
+  and the audit trail; switch strategies **OFF/PAPER**; pause entries, kill switch, square off,
+  reconcile, turn the live master switch **off**.
+- **Only you, in the dashboard:** anything to do with LIVE (strategy LIVE, master switch ON),
+  approving or executing swing trades, resuming entries, resetting the kill switch, approving
+  limits, acknowledging alerts.
+
+The desk must be running (`./deploy/start.sh`). Then:
+
+**Claude Code** (in the `tradey` folder):
+```bash
+claude mcp add claudetrade -- docker compose -f "$PWD/docker-compose.yml" exec -T desk claudetrade mcp
+```
+
+**Claude Desktop**: Settings → Developer → Edit Config, add (use your real path; `which docker`
+shows the docker path):
+```json
+{
+  "mcpServers": {
+    "claudetrade": {
+      "command": "/usr/local/bin/docker",
+      "args": ["compose", "-f", "/Users/YOU/tradey/docker-compose.yml", "exec", "-T", "desk", "claudetrade", "mcp"]
+    }
+  }
+}
+```
+Restart Claude Desktop, then ask: *"Use claudetrade: what's the desk status?"*
+
 To use an always-on server instead, follow the steps below.
 
 ## 1. A server

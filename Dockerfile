@@ -6,7 +6,7 @@ COPY pyproject.toml README.md ./
 COPY deploy/requirements.lock ./deploy/requirements.lock
 COPY src ./src
 # Versions pinned to the set the test suite passed on (pandas 2.3 + numpy 2.3 + growwapi 1.5)
-RUN pip install --no-cache-dir -c deploy/requirements.lock ".[server,groww,agent]" && mkdir -p /data && chown trader /data
+RUN pip install --no-cache-dir -c deploy/requirements.lock ".[server,groww,agent,mcp]" && mkdir -p /data && chown trader /data
 # relative paths in the config (db_path, cache_dir) resolve inside the /data volume
 WORKDIR /data
 USER trader
