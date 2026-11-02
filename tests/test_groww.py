@@ -177,3 +177,26 @@ def test_feed_failure_marks_data_unhealthy(app, fake, clock):
     feed = GrowwFeed(fake, app.market_data, clock, limiter=RateLimiter(sleep=lambda s: None))
     assert feed.poll(["ALPHA"]) == 0
     assert not app.market_data.is_healthy()
+
+
+def test_last_trade_time_in_seconds_or_ms(app, fake, clock):
+    from claudetrade.feeds import epoch_to_ist
+
+    now_s = clock().timestamp()
+    assert abs((epoch_to_ist(now_s) - clock()).total_seconds()) < 1          # what Groww actually sends
+    assert abs((epoch_to_ist(now_s * 1000) - clock()).total_seconds()) < 1   # what its docs say
+    assert epoch_to_ist(0) is None and epoch_to_ist("x") is None
+    fake.quotes["ALPHA"] = {"last_price": 501.5, "bid_price": 501.45, "offer_price": 501.55, "volume": 1,
+                            "day_change": 1.5, "last_trade_time": int(now_s) - 2}
+    feed = GrowwFeed(fake, app.market_data, clock, limiter=RateLimiter(sleep=lambda s: None))
+    feed.poll(["ALPHA"])
+    assert app.market_data.validate_quote("ALPHA", TradeMode.INTRADAY).valid  # not "56 years old"
+
+
+def test_candles_with_null_volume(app, fake, clock):
+    fake.candles["NSE-ALPHA"] = [["2026-10-13T09:15:00", 500, 501, 499, 500.5, None, None],
+                                 ["2026-10-13T09:16:00", 500.5, 502, 500, 501.5, 1500, None],
+                                 ["2026-10-13T09:17:00", None, None, None, None, None, None]]
+    feed = GrowwFeed(fake, app.market_data, clock, limiter=RateLimiter(sleep=lambda s: None))
+    df = feed.candles("ALPHA", datetime(2026, 10, 13, 9, 15, tzinfo=IST), datetime(2026, 10, 13, 9, 20, tzinfo=IST))
+    assert len(df) == 2 and list(df["volume"]) == [0, 1500] and str(df["volume"].dtype) == "int64"

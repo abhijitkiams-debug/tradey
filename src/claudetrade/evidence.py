@@ -103,7 +103,8 @@ def evaluate(gate: LiveGate, now: datetime, alert_channel_configured: bool, stra
         res.paper_hours = (now - min(starts)).total_seconds() / 3600
         # Session results come only from the hash-chained audit log, never from mutable snapshots.
         reports = {e["payload"]["date"]: e["payload"] for e in events
-                   if e["action"] == "EOD_REPORT" and "date" in e["payload"]}
+                   if e["action"] == "EOD_REPORT" and "date" in e["payload"]
+                   and not e["payload"].get("market_closed")}  # exchange holidays don't count either way
         if strategy_key is not None:
             since = min(starts).date().isoformat()
             reports = {d: r for d, r in reports.items() if d >= since and

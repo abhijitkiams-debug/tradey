@@ -297,7 +297,7 @@ class GrowwBroker:
 
 def _parse_ts(v: Any, clock: Callable[[], datetime]) -> datetime:
     if isinstance(v, (int, float)):
-        return datetime.fromtimestamp(v / 1000, IST)
+        return datetime.fromtimestamp(v / 1000 if v > 1e12 else v, IST)  # Groww mixes ms and s
     if isinstance(v, str) and v:
         try:
             ts = datetime.fromisoformat(v.replace("Z", "+00:00"))

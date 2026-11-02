@@ -20,6 +20,19 @@ from .market_data import MarketDataService, validate_bars
 from .models import IST, Quote
 
 
+def epoch_to_ist(v: Any) -> datetime | None:
+    """Groww's docs say last_trade_time is epoch milliseconds, but the live API returns seconds.
+    Accept both: anything above 1e12 is milliseconds (seconds won't reach 1e12 until year 33658)."""
+    if isinstance(v, str):
+        try:
+            v = float(v)
+        except ValueError:
+            return None
+    if not isinstance(v, (int, float)) or v <= 0:
+        return None
+    return datetime.fromtimestamp(v / 1000 if v > 1e12 else v, IST)
+
+
 def _d(v: Any) -> Decimal:
     return Decimal(str(v if v is not None else 0))
 
@@ -45,7 +58,7 @@ class GrowwFeed:
             return None
         prev_close = last - _d(q.get("day_change"))  # derived: robust to ohlc.close semantics
         ltt = q.get("last_trade_time")
-        src = datetime.fromtimestamp(ltt / 1000, IST) if isinstance(ltt, (int, float)) and ltt > 0 else None
+        src = epoch_to_ist(ltt)
         if src is None:
             return None  # no timestamp, no trust
         return Quote(symbol, last, _d(q.get("bid_price")), _d(q.get("offer_price")), int(q.get("volume") or 0),
@@ -102,8 +115,13 @@ class GrowwFeed:
         elif ts.dt.tz is None:
             ts = ts.dt.tz_localize(IST)
         df.index = ts
-        return df.drop(columns="timestamp").astype({"open": float, "high": float, "low": float, "close": float,
-                                                     "volume": "int64"}).sort_index()
+        df = df.drop(columns="timestamp")
+        for c in ("open", "high", "low", "close", "volume"):
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        # Groww sends null volume on some candles; a candle with no prices is unusable.
+        df = df[df.index.notna()].dropna(subset=["open", "high", "low", "close"])
+        df["volume"] = df["volume"].fillna(0).astype("int64")
+        return df.astype({"open": float, "high": float, "low": float, "close": float}).sort_index()
 
     def today_bars(self, symbol: str) -> pd.DataFrame:
         now = self.clock()

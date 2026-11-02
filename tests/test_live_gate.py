@@ -206,3 +206,18 @@ def test_send_test_alert(tmp_path):
     assert c.post("/api/alerts/test", headers=AUTH).json()["ok"] and "Test alert" in sent[-1].message
     rt.app.alert_channel_configured = False
     assert c.post("/api/alerts/test", headers=AUTH).status_code == 409
+
+
+def test_exchange_holiday_never_counts(tmp_path):
+    rt, clock = paper(tmp_path, [13, 14, 15])
+    # Friday 16th: exchange closed — quotes keep yesterday's last-trade time all day
+    for h, m in ((9, 25), (10, 0), (15, 1), (15, 2), (15, 40)):
+        clock.set(datetime(2026, 10, 16, h, m, tzinfo=IST))
+        rt.scheduler.run_pending()
+    rep = rt.app.persistence.store.latest("eod_report")["2026-10-16"]
+    assert rep["market_closed"] is True
+    rt.stop()
+    clock.set(datetime(2026, 10, 19, 9, 0, tzinfo=IST))
+    res = evaluate(gate_for(tmp_path), clock(), True)
+    assert [s["date"] for s in res.sessions] == ["2026-10-13", "2026-10-14", "2026-10-15"]
+    assert res.passed, res.reasons

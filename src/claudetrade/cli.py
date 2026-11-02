@@ -209,7 +209,8 @@ def cmd_doctor(args) -> int:
             rec("FAIL", "writable", f"{d}: {e}")
     now = system_clock()
     if not s.session.holidays:
-        rec("WARN", "holidays", "no NSE holidays configured: the scheduler will treat them as trading days")
+        rec("INFO", "holidays", "none listed: closed days are detected from Groww data (nothing traded) and "
+            "never count toward the paper record; listing NSE holidays is optional")
     rec("INFO", "clock", f"{now:%a %d %b %H:%M} IST, trading day={s.session.is_trading_day(now)}, open now={s.session.is_open(now)}")
 
     if s.data_source != "groww" and not s.live_enabled:
@@ -251,8 +252,13 @@ def cmd_doctor(args) -> int:
             for sym in s.universe:
                 try:
                     q = feed.quote(sym)
-                    age = (now - q.source_ts).total_seconds() / 60 if q else None
-                    rec("PASS" if q else "FAIL", f"quote {sym}", f"₹{q.ltp}, last trade {age:.0f} min ago" if q else "no price")
+                    if q is None:
+                        rec("FAIL", f"quote {sym}", "no price")
+                    else:
+                        age_h = (now - q.source_ts).total_seconds() / 3600
+                        sane = -0.1 < age_h < 24 * 5  # older than a long weekend means a timestamp problem
+                        rec("PASS" if sane else "FAIL", f"quote {sym}",
+                            f"₹{q.ltp}, last trade {q.source_ts:%a %d %b %H:%M} IST" + ("" if sane else " (implausible time)"))
                 except Exception as e:  # noqa: BLE001
                     rec("FAIL", f"quote {sym}", _groww_error(e))
             if s.universe:

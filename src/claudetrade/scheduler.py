@@ -235,12 +235,19 @@ class Scheduler:
         app.execution.sync()
         mismatches = app.execution.reconcile_positions()
         report = {**app.intraday.end_of_day_report(), "mismatches": mismatches}
+        # Holiday detection from the exchange's own data: if nothing in the universe traded today,
+        # the market was closed. Such a day never counts toward the paper record, clean or not.
+        today = app.clock().date()
+        quotes = [app.market_data._quotes.get(s) for s in self.settings.universe]
+        report["market_closed"] = bool(self.settings.universe) and not any(
+            q is not None and q.source_ts.date() == today for q in quotes)
         # The audit copy is the evidence of record (hash-chained); the snapshot is for convenience.
         app.audit.record("scheduler", "EOD_REPORT", date=report["date"], mode=report["mode"],
                          verified_flat=report["verified_flat"], square_off_failed=report["square_off_failed"],
                          reconciliation_ok=report["reconciliation_ok"], mismatches=mismatches,
                          orders=report["orders"], realised_pnl=report["realised_pnl"],
-                         strategies=report["strategies"], strategy_pnl=report["strategy_pnl"])
+                         strategies=report["strategies"], strategy_pnl=report["strategy_pnl"],
+                         market_closed=report["market_closed"])
         if self.store is not None:
             self.store.put("eod_report", app.clock().date().isoformat(), report)
             self.store.checkpoint_wal()  # make the day's evidence readable from a read-only mount
