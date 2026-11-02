@@ -123,6 +123,10 @@ class FakeGroww:
         self._maybe_fail("get_available_margin_details")
         return {"clear_cash": 10000.0, "equity_margin_details": {"cnc_balance_available": 9876.5, "mis_balance_available": 9876.5}}
 
+    def get_user_profile(self, timeout=None):
+        self._maybe_fail("get_user_profile")
+        return {"active_segments": ["CASH"], "nse_enabled": True, "bse_enabled": True, "ddpi_enabled": False}
+
     def get_quote(self, trading_symbol, exchange, segment, timeout=None):
         self._maybe_fail("get_quote")
         return self.quotes[trading_symbol]

@@ -57,6 +57,16 @@ class ModeReason(Reason):
     mode: TradeMode | None = None
 
 
+class GrowwSetup(BaseModel):
+    # Any length accepted here: check_credentials explains what's wrong in plain words.
+    api_key: str = Field(max_length=8000)
+    totp_secret: str = Field(max_length=200)
+
+
+class PracticeReq(BaseModel):
+    day: date | None = None
+
+
 class SetMode(BaseModel):
     mode: StrategyMode
     confirm: str | None = None
@@ -105,7 +115,11 @@ def create_app(target: Desk | Runtime, token: str | None = None) -> FastAPI:
                                       for b, rt in desk.books.items()}}
 
     @api.get("/", response_class=HTMLResponse)
-    def index() -> str:
+    def home() -> str:
+        return (STATIC / "home.html").read_text()  # simple mode: plain words, big buttons
+
+    @api.get("/advanced", response_class=HTMLResponse)
+    def advanced() -> str:
         return (STATIC / "index.html").read_text()
 
     @api.get("/api/desk")
@@ -149,6 +163,49 @@ def create_app(target: Desk | Runtime, token: str | None = None) -> FastAPI:
         for rt in desk.books.values():
             locked(rt, rt.app.monitor.activate_kill_switch, op, body.reason)
         return {"ok": True, "message": "Kill switch ON in every book"}
+
+    # ---- simple mode (Home page) -------------------------------------------------------------
+    from . import simple as simple_mode
+
+    if not hasattr(desk, "practice"):
+        desk.practice = simple_mode.Practice()
+
+    @api.get("/api/simple")
+    def simple_home(op: str = Depends(operator)) -> dict:
+        return guarded(lambda: {"summary": simple_mode.summary(desk), "checks": simple_mode.checks(desk),
+                                "practice": desk.practice.status()})
+
+    @api.post("/api/simple/{action}")
+    def simple_action(action: str, op: str = Depends(operator)) -> dict:
+        fn = {"start": simple_mode.start_practice, "pause": simple_mode.pause, "resume": simple_mode.resume,
+              "emergency": simple_mode.emergency_stop, "clear-stop": simple_mode.clear_stop}.get(action)
+        if fn is None:
+            raise HTTPException(404, "unknown action")
+        return {"ok": True, "message": guarded(fn, desk, op)}
+
+    @api.post("/api/practice")
+    def practice(body: PracticeReq, op: str = Depends(operator)) -> dict:
+        if not getattr(desk, "settings", None):
+            raise HTTPException(409, "practice needs the full desk (claudetrade serve)")
+        return {"ok": True, "message": desk.practice.start(desk, body.day)}
+
+    @api.post("/api/setup/groww")
+    def setup_groww(body: GrowwSetup, op: str = Depends(operator)) -> dict:
+        from .broker.groww_auth import check_credentials
+        from .secrets_store import save_groww
+
+        ok, message = check_credentials(body.api_key, body.totp_secret)
+        if not ok:
+            return {"ok": False, "message": message}
+        save_groww(body.api_key, body.totp_secret)
+        desk.paper.app.audit.record(op, "GROWW_CREDENTIALS_SAVED")  # the values themselves are never logged
+        restarting = os.environ.get("CLAUDETRADE_RESTART_ON_SETUP", "1") != "0"
+        if restarting:  # Docker's restart policy brings the app back with the new login (~20 s)
+            import threading
+
+            threading.Timer(1.5, os._exit, [3]).start()
+        return {"ok": True, "message": message + (" Restarting the app now (about 20 seconds)…" if restarting else ""),
+                "restarting": restarting}
 
     # ---- book-scoped reads ------------------------------------------------------------------
     @api.get("/api/dashboard")

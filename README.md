@@ -1,5 +1,8 @@
 # ClaudeTrade
 
+> **New here? Read [START-HERE.md](START-HERE.md).** Double-click *Start ClaudeTrade*, connect
+> Groww in the browser, press *Start practice*. No terminal needed.
+
 AI-assisted trading for NSE cash equities with ₹10,000 capital. Claude does the research,
 risk rules are enforced in code, and every broker order is checked and reconciled.
 Implements PRD v1.0 Phases 1–3 (foundation, paper trading, swing approvals) and the

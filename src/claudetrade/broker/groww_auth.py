@@ -28,9 +28,14 @@ def login_from_env() -> tuple[Callable[[], Any], str]:
     """Return (login function, flow name) from GROWW_* environment variables."""
     from growwapi import GrowwAPI
 
+    from ..secrets_store import load_groww
+
+    saved = load_groww()  # entered on the browser Setup page: always the newest, so it wins
     token = (os.environ.get("GROWW_ACCESS_TOKEN") or "").strip()
     api_key = (os.environ.get("GROWW_API_KEY") or "").strip()
     totp_secret = (os.environ.get("GROWW_TOTP_SECRET") or "").replace(" ", "").strip().upper()
+    if saved.get("api_key") and saved.get("totp_secret"):
+        api_key, totp_secret, token = saved["api_key"], saved["totp_secret"], ""
     if api_key and totp_secret:
         import pyotp
 
@@ -206,3 +211,32 @@ def diagnose_login() -> list[tuple[str, str, str]]:
             hint = f"{type(e).__name__}: {msg}"
         out.append(("FAIL", "token exchange", hint))
     return out
+
+
+def check_credentials(api_key: str, totp_secret: str) -> tuple[bool, str]:
+    """Try a Groww login with these values and confirm NSE access. Plain-language result,
+    never echoes the values. Used by the browser Setup page before saving."""
+    api_key, totp_secret = api_key.strip(), totp_secret.replace(" ", "").strip().upper()
+    if len(api_key) < 100 or api_key.count(".") != 2:
+        return False, "That doesn't look like the TOTP token (it should be a very long text with two dots)."
+    if not totp_secret or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567=" for c in totp_secret):
+        return False, "That doesn't look like the TOTP secret (only letters A-Z and numbers 2-7)."
+    try:
+        import pyotp
+        from growwapi import GrowwAPI
+
+        client = GrowwAPI(GrowwAPI.get_access_token(api_key=api_key, totp=pyotp.TOTP(totp_secret).now()))
+    except Exception as e:  # noqa: BLE001
+        code = str(getattr(e, "code", ""))
+        if code in ("400", "401"):
+            return False, ("Groww said no. Make sure the token and the secret come from the SAME key, and that the key "
+                           "wasn't deleted. If unsure, create a new TOTP key and try again.")
+        return False, f"Couldn't reach Groww ({type(e).__name__}). Check the internet connection and try again."
+    try:
+        prof = client.get_user_profile(timeout=10) or {}
+    except Exception:  # noqa: BLE001
+        prof = {}
+    if prof and not ("CASH" in (prof.get("active_segments") or []) and prof.get("nse_enabled")):
+        return False, ("Login worked, but Groww says this account can't see NSE stock prices yet. Check that your "
+                       "Groww Trading API plan (₹499/month) is active and your stocks account is fully activated.")
+    return True, "Connected to Groww. NSE prices are available."

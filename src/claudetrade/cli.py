@@ -399,12 +399,20 @@ def cmd_serve(args) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
+    from dataclasses import replace
+
     from .desk import build_desk
+    from .secrets_store import has_groww
     from .server import create_app
     from .settings import load_settings
 
     settings = load_settings(args.config)
+    setup_needed = settings.data_source == "groww" and not has_groww()
+    if setup_needed:  # start anyway: the browser Setup page collects the Groww login, then restarts
+        logging.getLogger("claudetrade").warning("Groww not connected yet: open the dashboard to connect it")
+        settings = replace(settings, data_source="none", live_enabled=False, research_on_start=False)
     desk = build_desk(settings)
+    desk.setup_needed = setup_needed
     desk.start(settings.tick_seconds)
     try:
         uvicorn.run(create_app(desk), host=args.host, port=args.port, log_level="info")

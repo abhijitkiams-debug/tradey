@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClaudeTrade</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f4f6fb; --card: #ffffff; --ink: #14161b; --muted: #5f6675; --line: #e3e6ee;
+    --good: #16794a; --good-bg: #e7f6ee; --warn: #9a5b00; --warn-bg: #fff4dc; --bad: #b42318; --bad-bg: #fdeceb;
+    --blue: #3352d1; --blue-ink: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #101318; --card: #191d24; --ink: #eceef2; --muted: #a2a9b6; --line: #2b313b;
+            --good: #52d08f; --good-bg: #13291f; --warn: #f2b84b; --warn-bg: #2d2412; --bad: #ff7b6e; --bad-bg: #331a18;
+            --blue: #8297ff; --blue-ink: #0d1020; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 16px; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  header h1 { font-size: 22px; margin: 0; }
+  .badge { background: var(--good-bg); color: var(--good); border-radius: 999px; padding: 3px 12px; font-size: 14px; font-weight: 600; }
+  header a { margin-left: auto; color: var(--muted); font-size: 15px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; margin-bottom: 14px; }
+  .status { display: flex; gap: 14px; align-items: flex-start; }
+  .status .icon { font-size: 40px; line-height: 1; }
+  .status h2 { margin: 0 0 4px; font-size: 22px; line-height: 1.3; }
+  .status.good { background: var(--good-bg); border-color: transparent; }
+  .status.warn { background: var(--warn-bg); border-color: transparent; }
+  .status.bad { background: var(--bad-bg); border-color: transparent; }
+  .muted { color: var(--muted); }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .tile b { display: block; font-size: 24px; font-variant-numeric: tabular-nums; }
+  .tile span { color: var(--muted); font-size: 14px; }
+  .up { color: var(--good); } .down { color: var(--bad); }
+  .buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+  button { font: inherit; font-weight: 600; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+           padding: 12px 18px; cursor: pointer; min-height: 48px; }
+  button.go { background: var(--blue); color: var(--blue-ink); border-color: var(--blue); }
+  button.stop { background: var(--bad); color: #fff; border-color: var(--bad); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  h3 { margin: 0 0 10px; font-size: 18px; }
+  ul.checks { list-style: none; margin: 0; padding: 0; }
+  ul.checks li { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  ul.checks li:last-child { border-bottom: 0; }
+  ul.checks .fix { font-weight: 600; }
+  ol { margin: 6px 0 12px 20px; padding: 0; }
+  label { display: block; font-weight: 600; margin: 10px 0 4px; }
+  input { font: inherit; width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  .msg { margin-top: 10px; font-weight: 600; }
+  .msg.bad { color: var(--bad); } .msg.good { color: var(--good); }
+  details { margin-top: 6px; } summary { cursor: pointer; color: var(--muted); }
+  pre { white-space: pre-wrap; font-size: 13px; color: var(--muted); }
+  #toast { position: fixed; left: 16px; right: 16px; bottom: 16px; max-width: 520px; margin: 0 auto; background: var(--ink); color: var(--bg);
+           padding: 12px 16px; border-radius: 12px; display: none; font-weight: 600; z-index: 9; }
+  @media (max-width: 560px) { .tiles { grid-template-columns: 1fr; } .status .icon { font-size: 32px; } .status h2 { font-size: 19px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ClaudeTrade</h1>
+    <span class="badge">Practice mode · pretend money</span>
+    <a href="/advanced">Advanced ›</a>
+  </header>
+
+  <div id="signin" class="card" hidden>
+    <h3>Open ClaudeTrade</h3>
+    <p>The easiest way: double-click the <b>Start ClaudeTrade</b> icon. It opens this page already signed in.</p>
+    <details><summary>Or sign in by hand</summary>
+      <label for="tok">Operator token (from the .env file)</label>
+      <input id="tok" type="password" autocomplete="off">
+      <p><button class="go" data-act="signin">Sign in</button></p>
+    </details>
+  </div>
+
+  <div id="app" hidden>
+    <div id="status" class="card status"></div>
+
+    <div class="tiles" style="margin-bottom:14px">
+      <div class="tile"><b id="money">—</b><span id="moneysub">Pretend money</span></div>
+      <div class="tile"><b id="today">—</b><span>Today's result</span></div>
+      <div class="tile"><b id="trades">—</b><span>Practice trades today</span></div>
+    </div>
+
+    <div class="card">
+      <div class="buttons" id="buttons"></div>
+      <p class="muted" style="margin:10px 0 0">Pause = no new trades. Emergency stop = no new trades <i>and</i> close all of today's trades now.</p>
+    </div>
+
+    <div id="setup" class="card" hidden>
+      <h3>🔗 Connect Groww</h3>
+      <p>ClaudeTrade needs your Groww Trade API key to see stock prices. It only <b>reads prices</b> while practising.</p>
+      <ol>
+        <li>Open <a href="https://groww.in/trade-api/api-keys" target="_blank" rel="noopener">groww.in/trade-api/api-keys</a> and sign in.</li>
+        <li>Click the little arrow next to <b>Generate API Key</b> → choose <b>Generate TOTP token</b>.</li>
+        <li>Give it a name (like <i>claudetrade</i>) and continue.</li>
+        <li>Copy the <b>TOTP token</b> into box 1 and the <b>TOTP secret</b> into box 2 below.</li>
+      </ol>
+      <label for="gkey">1. TOTP token (very long)</label>
+      <input id="gkey" type="password" autocomplete="off" spellcheck="false">
+      <label for="gsec">2. TOTP secret (short, capital letters and numbers)</label>
+      <input id="gsec" type="password" autocomplete="off" spellcheck="false">
+      <p><button class="go" data-act="connect">Connect Groww</button></p>
+      <div id="setupmsg" class="msg"></div>
+      <p class="muted">Keep these two secret, like a password. Never share them, not even in a chat.</p>
+    </div>
+
+    <div class="card">
+      <h3>🧪 Practice on a past day</h3>
+      <p class="muted" style="margin-top:0">Works any time, even at night. It replays the last market day to show what the strategies would have done. It never touches your real practice record.</p>
+      <div class="buttons"><button class="go" data-act="practice" id="practicebtn">Run practice</button></div>
+      <div id="practice"></div>
+    </div>
+
+    <div class="card">
+      <h3>Is everything OK?</h3>
+      <ul class="checks" id="checks"></ul>
+    </div>
+
+    <div class="card">
+      <h3>What is this?</h3>
+      <p style="margin:0">ClaudeTrade practises trading Indian stocks with <b>pretend money</b> (₹10,000) using real prices from Groww.
+        Each trading day it watches a few big companies, makes small practice trades by itself, and closes all of them before
+        3:10 PM. Leave this computer on and awake on weekdays from 9:00 AM to 4:30 PM. <b>Real-money trading is <span id="realmoney">OFF</span></b>
+        and can only be turned on in the Advanced view after enough safe practice.</p>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const TOKEN_KEY = "ct-operator-token";
+const store = { get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+                set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} } };
+// The Start icon opens  http://127.0.0.1:8000/#token=...  — the part after # never reaches any server.
+(function takeTokenFromLink() {
+  const m = location.hash.match(/token=([^&]+)/);
+  if (m) { store.set(TOKEN_KEY, decodeURIComponent(m[1])); history.replaceState(null, "", location.pathname); }
+})();
+let token = store.get(TOKEN_KEY), restarting = false;
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function toast(msg, ms = 6000) { const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", ms); }
+async function api(path, method = "GET", body) {
+  const r = await fetch(path, {method, headers: {"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+                               body: body ? JSON.stringify(body) : undefined});
+  if (r.status === 401 || r.status === 503) { $("app").hidden = true; $("signin").hidden = false; throw new Error("Please open ClaudeTrade with the Start icon."); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Something went wrong. Please try again.");
+  return data;
+}
+const btn = (label, act, cls = "") => `<button class="${cls}" data-act="${act}">${label}</button>`;
+
+const actions = {
+  signin() { token = $("tok").value.trim(); store.set(TOKEN_KEY, token); refresh(); },
+  async simple(name, confirmText) {
+    if (confirmText && !confirm(confirmText)) return;
+    try { toast((await api("/api/simple/" + name, "POST")).message); } catch (e) { toast(e.message); }
+    refresh();
+  },
+  start() { actions.simple("start"); },
+  pause() { actions.simple("pause"); },
+  resume() { actions.simple("resume"); },
+  emergency() { actions.simple("emergency", "Emergency stop?\n\nThis stops all new trades and closes today's open trades now."); },
+  clear() { actions.simple("clear-stop", "Clear the emergency stop? Trading can start again after you press Resume."); },
+  async practice() {
+    try { toast((await api("/api/practice", "POST", {})).message); } catch (e) { toast(e.message); }
+    refresh();
+  },
+  async connect() {
+    const key = $("gkey").value, sec = $("gsec").value, m = $("setupmsg");
+    if (!key.trim() || !sec.trim()) { m.className = "msg bad"; m.textContent = "Please fill in both boxes."; return; }
+    m.className = "msg"; m.textContent = "Checking with Groww…";
+    try {
+      const r = await api("/api/setup/groww", "POST", {api_key: key, totp_secret: sec});
+      m.className = "msg " + (r.ok ? "good" : "bad"); m.textContent = r.message;
+      if (r.ok) { $("gkey").value = ""; $("gsec").value = ""; if (r.restarting) waitForRestart(); }
+    } catch (e) { m.className = "msg bad"; m.textContent = e.message; }
+  },
+};
+document.addEventListener("click", (e) => { const b = e.target.closest("[data-act]"); if (b && !b.disabled) actions[b.dataset.act](b.dataset); });
+
+async function waitForRestart() {
+  restarting = true;
+  await new Promise(r => setTimeout(r, 4000));
+  for (let i = 0; i < 60; i++) {
+    try { const r = await fetch("/healthz"); if (r.ok) { restarting = false; location.reload(); return; } } catch (e) {}
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  $("setupmsg").textContent = "The app is taking long to restart. Double-click the Start ClaudeTrade icon again.";
+  restarting = false;
+}
+
+function render(d) {
+  const s = d.summary;
+  const icon = s.emergency_stop ? "🛑" : s.setup_needed ? "👋" : s.paused ? "⏸️" : s.tone === "good" ? "✅" : "⚠️";
+  $("status").className = "card status " + s.tone;
+  $("status").innerHTML = `<div class="icon">${icon}</div><div><h2>${esc(s.headline)}</h2><div class="muted">${esc(s.market)}</div></div>`;
+  $("money").textContent = s.pretend_money;
+  $("moneysub").textContent = "Pretend money (started with " + s.start_money + ")";
+  $("today").textContent = s.today_result; $("today").className = s.today_positive ? "up" : "down";
+  $("trades").textContent = s.trades_today + (s.open_trades ? ` (${s.open_trades} open)` : "");
+  $("realmoney").textContent = s.real_money;
+
+  const b = [];
+  if (s.emergency_stop) b.push(btn("✔ Clear emergency stop", "clear", "go"));
+  else if (s.paused) b.push(btn("▶ Resume", "resume", "go"));
+  else if (!s.practising.length) b.push(btn("▶ Start practice", "start", "go"));
+  if (!s.paused && !s.emergency_stop && s.practising.length) b.push(btn("⏸ Pause", "pause"));
+  if (!s.emergency_stop) b.push(btn("🛑 Emergency stop", "emergency", "stop"));
+  $("buttons").innerHTML = b.join("");
+  if (s.setup_needed) $("buttons").querySelectorAll("button").forEach(x => { if (x.dataset.act === "start") x.disabled = true; });
+
+  const grow = d.checks.find(c => c.title === "Groww connected");
+  $("setup").hidden = !(s.setup_needed || (grow && grow.ok === false));
+
+  $("checks").innerHTML = d.checks.map(c => {
+    const mark = c.ok === true ? "✅" : c.ok === false ? "❌" : "ℹ️";
+    return `<li><span>${mark}</span><div><div><b>${esc(c.title)}</b>${c.detail ? " — " + esc(c.detail) : ""}</div>${c.fix ? `<div class="fix">👉 ${esc(c.fix)}</div>` : ""}</div></li>`;
+  }).join("");
+
+  const p = d.practice, pb = $("practicebtn");
+  pb.disabled = p.state === "running"; pb.textContent = p.state === "running" ? "Running… (about a minute)" : "Run practice";
+  let html = "";
+  if (p.state === "running") html = `<p class="muted">⏳ Working… ${esc((p.log || []).slice(-1)[0] || "")}</p>`;
+  if (p.result && p.result.sentence) {
+    html = `<p class="msg ${p.state === "error" ? "bad" : (p.result.positive ? "good" : "bad")}">${esc(p.result.sentence)}</p>` +
+      (p.result.safety ? `<p style="margin:4px 0">${esc(p.result.safety)}</p>` : "") +
+      (p.result.real_data === false ? '<p class="muted">Used made-up prices because Groww isn\'t connected yet.</p>' : "") +
+      (p.state === "error" ? `<details><summary>Technical details</summary><pre>${esc((p.log || []).join("\n"))}</pre></details>` : "");
+  }
+  $("practice").innerHTML = html;
+}
+
+async function refresh() {
+  if (restarting) return;
+  if (!token) { $("signin").hidden = false; return; }
+  try { const d = await api("/api/simple"); $("signin").hidden = true; $("app").hidden = false; render(d); }
+  catch (e) { if (token && !restarting) toast(e.message); }
+}
+refresh();
+setInterval(() => { if (!document.hidden) refresh(); }, 4000);
+</script>
+</body>
+</html>
